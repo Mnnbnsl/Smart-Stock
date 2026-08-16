@@ -5,7 +5,7 @@ scoring engine that ranks the Nifty 500 universe every day, plus a point-in-time
 backtester that validates the strategy against the Nifty 50 benchmark.
 
 - **Live scoring** (`main.py`) — fetches market data, scores every stock 0–100
-  across 7 factors, and shortlists the top N.
+  across 6 factors, and shortlists the top N.
 - **Backtesting** (`run_backtest.py`) — replays the same scoring logic
   historically with **no lookahead bias** to measure whether the strategy
   actually beats the market.
@@ -25,8 +25,7 @@ ALL NSE STOCKS (Nifty 500 constituents)
         ▼
 [2] Data Fetchers             → data/fetchers/
     ├── price_fetcher.py         OHLCV via yfinance          → Parquet cache (6h TTL)
-    ├── fundamental_fetcher.py   P/E, ROE, D/E, margins etc.  → JSON cache  (24h TTL)
-    └── fno_fetcher.py           PCR, OI, max pain via NSE    → JSON cache  (2h TTL)
+    └── fundamental_fetcher.py   P/E, ROE, D/E, margins etc.  → JSON cache  (24h TTL)
         │
         ▼
 [3] Factor Computation        → scoring/factors/
@@ -35,7 +34,6 @@ ALL NSE STOCKS (Nifty 500 constituents)
     ├── quality.py        (ROE, ROA, D/E, margins)            → quality_score
     ├── value.py          (P/E, P/B, EV/EBITDA, cheaper=better)→ value_score
     ├── technical.py      (RSI, SMA50, MACD, 52w position)    → technical_score
-    ├── fno_sentiment.py  (Put-Call Ratio, OI trend)          → fno_score
     └── events.py         (Earnings-date proximity)           → events_score
         │
         ▼
@@ -66,7 +64,7 @@ config/settings.py    Central configuration (weights, TTLs, paths, NSE headers)
 data/
   universe.py         Nifty 500 universe loader + delisted-symbol cache
   nse_universe.csv    Cached universe list (refreshed weekly)
-  fetchers/           price / fundamental / F&O data fetchers
+  fetchers/           price / fundamental data fetchers
   cache/              Parquet + JSON caches (git-ignored, regenerated on demand)
 scoring/
   engine.py           Orchestrates fetch → factor → composite → rank
@@ -145,29 +143,13 @@ so the engine stops wasting time on throttled retries.
 - **Cache:** one JSON file per ticker under `data/cache/fundamentals/`
   (`FUNDAMENTAL_CACHE_TTL_HOURS = 24`).
 
-### 1.4 F&O Sentiment Fetcher (`data/fetchers/fno_fetcher.py`)
-
-- **Source:** NSE public option-chain API
-  (`/api/option-chain-equities?symbol=SYMBOL`), which requires session cookies
-  established by visiting the NSE homepage first.
-- **Computed per stock:**
-  - `pcr` — Put-Call Ratio = total put OI / total call OI across the whole chain
-  - `total_call_oi`, `total_put_oi` — summed open interest
-  - `max_pain` — strike price with the highest combined OI
-  - `oi_trend` — `bullish` (PCR > 1.2) / `bearish` (PCR < 0.7) / `neutral`
-- **Concurrency:** 4 threads, each with its **own session** (`requests.Session`
-  is not thread-safe). NSE rate-limits aggressive scraping, so the worker count
-  is deliberately modest.
-- **Cache:** one JSON file per symbol under `data/cache/fno/`
-  (`FNO_CACHE_TTL_HOURS = 2`).
-
-### 1.5 Events Fetcher (`scoring/factors/events.py`)
+### 1.4 Events Fetcher (`scoring/factors/events.py`)
 
 - **Source:** `yfinance` `Ticker.calendar` → the next earnings date.
 - **Concurrency:** 8 threads.
 - **Cache:** none — earnings calendars are fetched fresh every run.
 
-### 1.6 Cache & Throughput Reference
+### 1.5 Cache & Throughput Reference
 
 | Data        | Format  | Location                     | TTL  | Concurrency |
 |-------------|---------|------------------------------|------|-------------|
@@ -175,7 +157,6 @@ so the engine stops wasting time on throttled retries.
 | Delisted    | JSON    | `data/cache/delisted.json`   | ∞    | —           |
 | Prices      | Parquet | `data/cache/price/`          | 6 h  | 100/chunk   |
 | Fundamentals| JSON    | `data/cache/fundamentals/`   | 24 h | 4 threads   |
-| F&O         | JSON    | `data/cache/fno/`            | 2 h  | 4 threads   |
 | Events      | —       | (none)                       | —    | 8 threads   |
 
 ---
@@ -196,7 +177,7 @@ Every factor reduces raw values to a common 0–100 scale where **higher = bette
 3. Missing/`inf` values become `NaN` and fall back to the neutral 50 default at
    the composite stage.
 
-### 2.2 The Seven Factors
+### 2.2 The Six Factors
 
 Each factor module produces a `*_score` column for every ticker.
 
@@ -248,14 +229,6 @@ Uses the `ta` library (RSI, MACD); falls back to neutral if unavailable.
 | MACD          | `macd_line − signal_line` (last)     | percentile (positive = bullish)    | 25% |
 | 52-week position | current close / 52-week high       | percentile (near high = strength)  | 20% |
 
-**F&O sentiment** (`fno_sentiment.py`) — *"where does derivatives positioning point?"*
-60% PCR + 40% OI-trend.
-
-- **PCR → score** (heuristic): ≥ 2.0 → 95; ≥ 1.5 → 80; ≥ 1.2 → 70; ≥ 0.8 → 50;
-  ≥ 0.5 → 30; else → 15. High PCR = heavy put writing, treated as contrarian
-  bullish; low PCR = call dominance = bearish.
-- **OI trend → score:** bullish 75 / neutral 50 / bearish 25.
-
 **Events** (`events.py`) — *"is any earnings surprise imminent?"*
 Penalizes stocks approaching an earnings date (uncertainty):
 
@@ -274,7 +247,7 @@ Penalizes stocks approaching an earnings date (uncertainty):
 
 The engine runs in three steps:
 
-1. **Fetch** — prices + benchmark, then fundamentals and F&O **only for tickers
+1. **Fetch** — prices + benchmark, then fundamentals **only for tickers
    with valid price data** (skips delisted symbols, which are recorded and
    skipped in future runs).
 2. **Compute factors** — each factor module returns a DataFrame indexed by ticker
@@ -293,16 +266,15 @@ The engine runs in three steps:
 
 | Factor    | Weight |
 |-----------|--------|
-| Momentum  | 25%    |
-| Quality   | 20%    |
-| Value     | 15%    |
-| Technical | 15%    |
-| Liquidity | 15%    |
-| F&O       | 5%     |
+| Momentum  | 26%    |
+| Quality   | 21%    |
+| Value     | 16%    |
+| Technical | 16%    |
+| Liquidity | 16%    |
 | Events    | 5%     |
 
 **Final result columns:** `symbol`, `quant_score`, `rank`, `shortlisted`, plus
-each `momentum/liquidity/quality/value/technical/fno/events_score`.
+each `momentum/liquidity/quality/value/technical/events_score`.
 
 ---
 
@@ -356,16 +328,16 @@ series to `df[df.index <= t]` (minimum 30 rows) and only computes factors from
 that slice — nothing after `t` is visible.
 
 **Fidelity adaptation** — only price-derived factors can be computed
-historically. Quality/Value/F&O/Events are excluded because the current
-fundamentals snapshot and live NSE option chain would leak future information.
+historically. Quality/Value/Events are excluded because the current
+fundamentals snapshot would leak future information.
 The live `FACTOR_WEIGHTS` are **renormalized over the price-only subset** so the
 backtest keeps the same *relative* emphasis as the live engine:
 
 | Price-only factor | Live weight | Renormalized |
 |-------------------|------------|--------------|
-| Momentum          | 25%        | 45.5%        |
-| Technical         | 15%        | 27.3%        |
-| Liquidity         | 15%        | 27.3%        |
+| Momentum          | 26%        | 44.8%        |
+| Technical         | 16%        | 27.6%        |
+| Liquidity         | 16%        | 27.6%        |
 
 The top-N are selected equal-weighted with the same rank logic as live.
 
@@ -493,7 +465,7 @@ background; press `Ctrl+C` to stop.
 | `MIN_AVG_DAILY_VOLUME` | 100,000 | Universe filter — defined, not yet enforced |
 | `MIN_PRICE` | 10.0 | Universe filter — defined, not yet enforced |
 | `LOOKBACK_DAYS` | 365 | Price history window for live scoring |
-| `FACTOR_WEIGHTS` | momentum .25, quality .20, value .15, technical .15, liquidity .15, fno .05, events .05 | Composite weights |
+| `FACTOR_WEIGHTS` | momentum .26, quality .21, value .16, technical .16, liquidity .16, events .05 | Composite weights |
 | `MOMENTUM_PERIOD_WEIGHTS` | 1M .30 / 3M .30 / 6M .20 / 12M .20 | Momentum horizon weights |
 | `RSI_IDEAL_LOW/HIGH` | 40 / 70 | RSI ideal band |
 | `EARNINGS_PENALTY_DAYS` | 3 | Imminent-earnings penalty window |
@@ -502,7 +474,6 @@ background; press `Ctrl+C` to stop.
 | `BACKTEST_PRICE_CACHE_TTL_HOURS` | 168 | 1-week cache for immutable price history |
 | `PRICE_CACHE_TTL_HOURS` | 6 | Live price cache freshness |
 | `FUNDAMENTAL_CACHE_TTL_HOURS` | 24 | Fundamentals freshness |
-| `FNO_CACHE_TTL_HOURS` | 2 | F&O data freshness |
 | `FUNDAMENTAL_WORKERS` | 4 | Parallel threads for `.info` fetches |
 | `PRICE_BATCH_CHUNK` | 100 | Tickers per `yf.download` call |
 | `DAILY_RUN_TIME` | `"08:30"` | Scheduler run time (IST) |

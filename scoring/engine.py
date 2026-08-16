@@ -1,7 +1,7 @@
 """
 Quantitative Scoring Engine.
 
-Orchestrates all 7 factors and computes a single composite score per stock.
+Orchestrates all 6 factors and computes a single composite score per stock.
 Outputs a ranked DataFrame and shortlists the Top N stocks for Stage 2.
 
 Usage:
@@ -20,13 +20,11 @@ from rich.progress import track
 from config.settings import FACTOR_WEIGHTS, TOP_N_SHORTLIST
 from data.fetchers.price_fetcher import fetch_price_batch, get_benchmark_data
 from data.fetchers.fundamental_fetcher import fetch_fundamentals_batch
-from data.fetchers.fno_fetcher import fetch_fno_batch
 from scoring.factors.momentum import compute_momentum_scores
 from scoring.factors.liquidity import compute_liquidity_scores
 from scoring.factors.quality import compute_quality_scores
 from scoring.factors.value import compute_value_scores
 from scoring.factors.technical import compute_technical_scores
-from scoring.factors.fno_sentiment import compute_fno_scores
 from scoring.factors.events import compute_events_scores
 
 logger = logging.getLogger(__name__)
@@ -39,7 +37,6 @@ FACTOR_SCORE_COLS = {
     "quality":    "quality_score",
     "value":      "value_score",
     "technical":  "technical_score",
-    "fno":        "fno_score",
     "events":     "events_score",
 }
 
@@ -48,7 +45,7 @@ class ScoringEngine:
     """
     Two-pass quantitative scoring engine.
 
-    Pass 1 — Data retrieval: downloads price, fundamental, and F&O data.
+    Pass 1 — Data retrieval: downloads price and fundamental data.
     Pass 2 — Factor computation: scores each factor, weights, composites.
 
     The engine is stateless between runs; each call to `.run()` is independent.
@@ -95,14 +92,14 @@ class ScoringEngine:
 
         # ── Step 1: Fetch data ──────────────────────────────────────
         console.print("[bold yellow]Step 1/3[/] Fetching market data...")
-        price_data, benchmark_df, fundamentals, fno_data = self._fetch_all(
+        price_data, benchmark_df, fundamentals = self._fetch_all(
             tickers, nse_symbols, force_refresh
         )
 
         # ── Step 2: Compute factor scores ──────────────────────────
         console.print("[bold yellow]Step 2/3[/] Computing factor scores...")
         factor_frames = self._compute_factors(
-            price_data, benchmark_df, fundamentals, fno_data, tickers
+            price_data, benchmark_df, fundamentals, tickers
         )
 
         # ── Step 3: Composite score ─────────────────────────────────
@@ -125,7 +122,7 @@ class ScoringEngine:
         nse_symbols: list[str],
         force_refresh: bool,
     ) -> tuple:
-        """Fetch price, fundamental, and F&O data."""
+        """Fetch price and fundamental data."""
         # Price data (batch download)
         price_data = fetch_price_batch(tickers, force_refresh=force_refresh)
         benchmark_df = get_benchmark_data(force_refresh=force_refresh)
@@ -140,7 +137,7 @@ class ScoringEngine:
         if dropped:
             logger.warning(
                 f"Skipping {len(dropped)} symbols without price data: "
-                f"{sorted(dropped)}. Removing from fundamentals/F&O/events."
+                f"{sorted(dropped)}. Removing from fundamentals/events."
             )
             try:
                 from data.universe import mark_delisted
@@ -154,29 +151,16 @@ class ScoringEngine:
             valid_tickers, force_refresh=force_refresh
         )
 
-        # F&O data — only for F&O-eligible stocks
-        valid_nse_symbols = [
-            self.ticker_to_symbol.get(t, t.replace(".NS", "")) for t in valid_tickers
-        ]
-        fno_data = pd.DataFrame()
-        try:
-            fno_data = fetch_fno_batch(valid_nse_symbols)
-        except KeyboardInterrupt:
-            raise
-        except Exception as e:
-            logger.warning(f"F&O data fetch failed: {e}. Skipping F&O factor.")
-
-        return price_data, benchmark_df, fundamentals, fno_data
+        return price_data, benchmark_df, fundamentals
 
     def _compute_factors(
         self,
         price_data: dict[str, pd.DataFrame],
         benchmark_df: pd.DataFrame | None,
         fundamentals: pd.DataFrame,
-        fno_data: pd.DataFrame,
         tickers: list[str],
     ) -> dict[str, pd.DataFrame]:
-        """Compute all 7 factor score DataFrames."""
+        """Compute all 6 factor score DataFrames."""
         frames: dict[str, pd.DataFrame] = {}
 
         # Momentum
@@ -205,15 +189,6 @@ class ScoringEngine:
         tech = compute_technical_scores(price_data)
         if not tech.empty:
             frames["technical"] = tech[["technical_score"]]
-
-        # F&O sentiment
-        if not fno_data.empty:
-            fno_scores = compute_fno_scores(fno_data)
-            if not fno_scores.empty:
-                # Map F&O index from symbol (e.g. TCS) to ticker (e.g. TCS.NS)
-                symbol_to_ticker = {s: t for t, s in self.ticker_to_symbol.items()}
-                fno_scores.index = fno_scores.index.map(lambda s: symbol_to_ticker.get(s, f"{s}.NS"))
-                frames["fno"] = fno_scores[["fno_score"]]
 
         # Events (uses tickers directly — only those with valid price data)
         events = compute_events_scores(sorted(price_data.keys()))
@@ -266,7 +241,7 @@ class ScoringEngine:
         priority_cols = [
             "symbol", "quant_score", "rank", "shortlisted",
             "momentum_score", "liquidity_score", "quality_score",
-            "value_score", "technical_score", "fno_score", "events_score",
+            "value_score", "technical_score", "events_score",
         ]
         existing = [c for c in priority_cols if c in merged.columns]
         rest = [c for c in merged.columns if c not in existing]

@@ -17,8 +17,8 @@ from config.settings import FACTOR_WEIGHTS
 
 logger = logging.getLogger(__name__)
 
-# Price-derived factors available point-in-time (fundamental/F&O/events data is
-# a current snapshot and would leak lookahead information into the backtest).
+# Price-derived factors available point-in-time (fundamental/events data is a
+# current snapshot and would leak lookahead information into the backtest).
 PRICE_FACTOR_COLS = {
     "momentum":  "momentum_score",
     "technical": "technical_score",
@@ -30,7 +30,7 @@ def _price_factor_weights() -> dict[str, float]:
     """
     Renormalize the live engine's FACTOR_WEIGHTS over the price-only factor
     subset so the backtest ranks stocks with the SAME relative factor emphasis
-    as the live engine (momentum 45.5% / technical 27.3% / liquidity 27.3%).
+    as the live engine (momentum 44.8% / technical 27.6% / liquidity 27.6%).
     """
     total = sum(FACTOR_WEIGHTS.get(f, 0.0) for f in PRICE_FACTOR_COLS)
     if total <= 0:

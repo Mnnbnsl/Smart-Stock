@@ -81,7 +81,6 @@ def _save_json(df: pd.DataFrame, path: str, ts: str) -> None:
                 "quality":    round(float(row.get("quality_score", 50)), 2),
                 "value":      round(float(row.get("value_score", 50)), 2),
                 "technical":  round(float(row.get("technical_score", 50)), 2),
-                "fno":        round(float(row.get("fno_score", 50)), 2),
                 "events":     round(float(row.get("events_score", 50)), 2),
             },
         })

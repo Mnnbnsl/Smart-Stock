@@ -30,12 +30,11 @@ LOOKBACK_DAYS = 365              # Historical data window
 # SCORING ENGINE WEIGHTS  (must sum to 1.0)
 # ─────────────────────────────────────────────
 FACTOR_WEIGHTS = {
-    "momentum":   0.25,
-    "liquidity":  0.15,
-    "quality":    0.20,
-    "value":      0.15,
-    "technical":  0.15,
-    "fno":        0.05,
+    "momentum":   0.26,
+    "liquidity":  0.16,
+    "quality":    0.21,
+    "value":      0.16,
+    "technical":  0.16,
     "events":     0.05,
 }
 
@@ -86,7 +85,6 @@ DRY_RUN_SYMBOLS = [
 # ─────────────────────────────────────────────
 PRICE_CACHE_TTL_HOURS = 6
 FUNDAMENTAL_CACHE_TTL_HOURS = 24
-FNO_CACHE_TTL_HOURS = 2
 
 # ─────────────────────────────────────────────
 # THROUGHPUT (large-universe runs)
