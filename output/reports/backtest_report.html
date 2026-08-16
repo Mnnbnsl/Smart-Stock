@@ -1,0 +1,1885 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Backtest Report — Quant Scoring Engine</title>
+  <meta name="description" content="Point-in-time backtest report — rolling quant portfolio vs Nifty 50 benchmark." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg:          #0a0b14;
+      --surface:     #111221;
+      --surface2:    #181a2e;
+      --border:      #1e2140;
+      --border2:     #252848;
+      --accent:      #6c63ff;
+      --accent2:     #48e5c2;
+      --accent3:     #ff6584;
+      --text:        #e8eaf6;
+      --text-dim:    #8892b0;
+      --text-muted:  #4a5568;
+      --green:       #48e5c2;
+      --red:         #ff6584;
+      --yellow:      #ffd166;
+      --radius:      12px;
+      --radius-sm:   8px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    /* ── HEADER ── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 32px;
+      padding: 24px 32px;
+      background: linear-gradient(135deg, var(--surface) 0%, var(--surface2) 100%);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      position: relative;
+      overflow: hidden;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+    .header::before {
+      content: '';
+      position: absolute;
+      top: -40px; left: -40px;
+      width: 220px; height: 220px;
+      background: radial-gradient(circle, rgba(108,99,255,0.16) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .header-left h1 {
+      font-size: 1.6rem;
+      font-weight: 800;
+      background: linear-gradient(135deg, #6c63ff, #48e5c2);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      letter-spacing: -0.5px;
+    }
+    .header-left p { color: var(--text-dim); font-size: 0.875rem; margin-top: 4px; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 100px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      background: rgba(72,229,194,0.12);
+      border: 1px solid rgba(72,229,194,0.3);
+      color: var(--green);
+    }
+    .params {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .param-pill {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.72rem;
+      color: var(--text-dim);
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 100px;
+      padding: 4px 12px;
+    }
+    .param-pill b { color: var(--text); font-weight: 600; }
+
+    /* ── STATS ROW ── */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 14px;
+      margin-bottom: 28px;
+    }
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      transition: border-color 0.2s, transform 0.2s;
+      position: relative;
+      overflow: hidden;
+    }
+    .stat-card:hover { border-color: var(--border2); transform: translateY(-2px); }
+    .stat-card.has-bench { padding-bottom: 14px; }
+    .stat-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); }
+    .stat-value { font-size: 1.7rem; font-weight: 700; margin-top: 6px; }
+    .stat-value.green { color: var(--green); }
+    .stat-value.accent { color: var(--accent); }
+    .stat-value.yellow { color: var(--yellow); }
+    .stat-value.red { color: var(--red); }
+    .bench-line {
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      margin-top: 6px;
+      padding-top: 8px;
+      border-top: 1px dashed var(--border);
+    }
+    .bench-line b { font-family: 'JetBrains Mono', monospace; color: var(--text); font-weight: 600; }
+
+    /* ── SECTIONS ── */
+    .section { margin-bottom: 28px; }
+    .section-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .section-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+    .section-sub { color: var(--text-muted); font-size: 0.75rem; margin: -8px 0 12px; }
+
+    /* ── CHARTS ── */
+    .charts-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+    .chart-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+    }
+    .chart-card h3 {
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-dim);
+      margin-bottom: 14px;
+    }
+    .chart-wrap { position: relative; height: 280px; }
+    canvas.chart-canvas { width: 100% !important; height: 280px !important; }
+
+    /* ── HEATMAP ── */
+    .heatmaps {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    .hm-table-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      overflow-x: auto;
+    }
+    .hm-table-wrap h3 {
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+    }
+    table.hm {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 2px;
+      font-size: 0.72rem;
+    }
+    .hm th {
+      color: var(--text-dim);
+      font-weight: 600;
+      padding: 4px 2px;
+      text-align: center;
+    }
+    .hm td {
+      text-align: center;
+      padding: 6px 2px;
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.68rem;
+      white-space: nowrap;
+    }
+    .hm td.hm-year { color: var(--text); font-weight: 700; background: transparent; text-align: left; }
+    .hm td.hm-ytd { color: var(--text); font-weight: 700; }
+    .hm td.empty { color: var(--text-muted); }
+    .hm td.pos { color: rgba(10,11,20,0.9); font-weight: 700; }
+    .hm td.neg { color: rgba(10,11,20,0.9); font-weight: 700; }
+    .hm-legend { display: flex; gap: 12px; align-items: center; margin-top: 8px; font-size: 0.68rem; color: var(--text-dim); }
+    .hm-legend span { display: inline-flex; align-items: center; gap: 4px; }
+    .swatch { width: 14px; height: 14px; border-radius: 3px; display: inline-block; }
+
+    /* ── TRADE LOG ── */
+    .table-wrapper {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    table.log {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+    }
+    .log thead { background: var(--surface2); }
+    .log thead th {
+      padding: 12px 16px;
+      text-align: left;
+      font-weight: 600;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-dim);
+      white-space: nowrap;
+    }
+    .log tbody tr { border-top: 1px solid var(--border); }
+    .log tbody tr:hover { background: rgba(108,99,255,0.05); }
+    .log td { padding: 12px 16px; vertical-align: top; }
+    .log .mono { font-family: 'JetBrains Mono', monospace; white-space: nowrap; }
+    .log .holdings { color: var(--text-dim); line-height: 1.7; }
+    .log .holdings .sym { color: var(--accent2); font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; }
+    .log .cap { color: var(--green); font-family: 'JetBrains Mono', monospace; }
+
+    footer {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      padding: 24px 0 0;
+      border-top: 1px solid var(--border);
+      margin-top: 28px;
+    }
+    footer .warn { color: var(--yellow); }
+
+    @media (max-width: 900px) {
+      .charts-grid, .heatmaps { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="header-left">
+    <h1>⏱ Backtest Report</h1>
+    <p>Point-in-Time Quant Scoring — Run: 20260816_130419</p>
+  </div>
+  <div class="params">
+    <span class="param-pill">Period <b>2023-01-01 → 2026-01-01</b></span>
+    <span class="param-pill">Rebalance <b>monthly</b></span>
+    <span class="param-pill">Top <b>15</b></span>
+    <span class="param-pill">Fee <b>0.10%</b></span>
+    <span class="param-pill">Capital <b>₹100,000</b></span>
+  </div>
+</div>
+
+<!-- SUMMARY CARDS -->
+<div class="stats-row">
+  <div class="stat-card has-bench">
+    <div class="stat-label">Total Return</div>
+    <div class="stat-value green">111.73%</div>
+    <div class="bench-line">Nifty 50: <b>43.68%</b></div>
+  </div>
+  <div class="stat-card has-bench">
+    <div class="stat-label">CAGR</div>
+    <div class="stat-value green">28.43%</div>
+    <div class="bench-line">Nifty 50: <b>12.85%</b></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Sharpe Ratio</div>
+    <div class="stat-value accent">1.18</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Sortino Ratio</div>
+    <div class="stat-value accent">1.05</div>
+  </div>
+  <div class="stat-card has-bench">
+    <div class="stat-label">Max Drawdown</div>
+    <div class="stat-value red">-16.07%</div>
+    <div class="bench-line">Nifty 50: <b>-15.77%</b></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Alpha vs Nifty</div>
+    <div class="stat-value green">13.04%</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Beta vs Nifty</div>
+    <div class="stat-value yellow">1.15</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Win Rate</div>
+    <div class="stat-value accent">77.14%</div>
+  </div>
+</div>
+
+<!-- EQUITY + DRAWDOWN CHARTS -->
+<div class="charts-grid">
+  <div class="chart-card">
+    <h3>📈 Equity Curve (₹)</h3>
+    <div class="chart-wrap"><canvas id="equityChart" class="chart-canvas"></canvas></div>
+  </div>
+  <div class="chart-card">
+    <h3>🕳 Drawdown (%)</h3>
+    <div class="chart-wrap"><canvas id="drawdownChart" class="chart-canvas"></canvas></div>
+  </div>
+</div>
+
+<!-- MONTHLY HEATMAPS -->
+<div class="section">
+  <div class="section-title">🗓 Monthly Return Heatmap (%)</div>
+  <div class="section-sub">Point-in-time strategy (top 15, monthly rebalance) vs Nifty 50 buy-and-hold.</div>
+  <div class="heatmaps">
+    <div class="hm-table-wrap">
+      <h3>Quant Strategy</h3>
+      
+      <table class="hm">
+        <thead><tr><th>Year</th><th>Jan</th><th>Feb</th><th>Mar</th><th>Apr</th><th>May</th><th>Jun</th><th>Jul</th><th>Aug</th><th>Sep</th><th>Oct</th><th>Nov</th><th>Dec</th><th>YTD</th></tr></thead>
+        <tbody>
+        
+          <tr>
+            <td class="hm-year">2023</td>
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.08);">
+                  0.0
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="neg"
+                    style="background: rgba(255,101,132,0.48);">
+                  -1.2
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.43);">
+                  1.0
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  3.8
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  4.7
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  7.7
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  5.6
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.56);">
+                  1.4
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  6.4
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="neg"
+                    style="background: rgba(255,101,132,0.95);">
+                  -4.4
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  8.2
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  10.8
+                </td>
+              
+            
+            
+            <td class="hm-ytd pos"
+                style="background: rgba(72,229,194,0.16);">
+              52.9
+            </td>
+          </tr>
+        
+          <tr>
+            <td class="hm-year">2024</td>
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  9.2
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  6.2
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.50);">
+                  1.2
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  3.9
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.98);">
+                  2.7
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  4.8
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.90);">
+                  2.5
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.24);">
+                  0.5
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.91);">
+                  2.5
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="neg"
+                    style="background: rgba(255,101,132,0.95);">
+                  -7.3
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  4.1
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.75);">
+                  2.0
+                </td>
+              
+            
+            
+            <td class="hm-ytd pos"
+                style="background: rgba(72,229,194,0.16);">
+              36.5
+            </td>
+          </tr>
+        
+          <tr>
+            <td class="hm-year">2025</td>
+            
+              
+              
+                
+                
+                <td class="neg"
+                    style="background: rgba(255,101,132,0.95);">
+                  -7.5
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="neg"
+                    style="background: rgba(255,101,132,0.95);">
+                  -6.5
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  10.1
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.74);">
+                  2.0
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="neg"
+                    style="background: rgba(255,101,132,0.55);">
+                  -1.4
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  4.6
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="neg"
+                    style="background: rgba(255,101,132,0.95);">
+                  -5.3
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="neg"
+                    style="background: rgba(255,101,132,0.87);">
+                  -2.4
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.50);">
+                  1.3
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  6.1
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.65);">
+                  1.7
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="neg"
+                    style="background: rgba(255,101,132,0.17);">
+                  -0.3
+                </td>
+              
+            
+            
+            <td class="hm-ytd pos"
+                style="background: rgba(72,229,194,0.16);">
+              1.1
+            </td>
+          </tr>
+        
+          <tr>
+            <td class="hm-year">2026</td>
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.20);">
+                  0.3
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.08);">
+                  0.0
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.08);">
+                  0.0
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.08);">
+                  0.0
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.08);">
+                  0.0
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.08);">
+                  0.0
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.08);">
+                  0.0
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.08);">
+                  0.0
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.08);">
+                  0.0
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.08);">
+                  0.0
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.08);">
+                  0.0
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.08);">
+                  0.0
+                </td>
+              
+            
+            
+            <td class="hm-ytd pos"
+                style="background: rgba(72,229,194,0.16);">
+              0.3
+            </td>
+          </tr>
+        
+        </tbody>
+      </table>
+      <div class="hm-legend">
+        <span><i class="swatch" style="background:rgba(72,229,194,0.85)"></i> positive</span>
+        <span><i class="swatch" style="background:rgba(255,101,132,0.85)"></i> negative</span>
+        <span>intensity ∝ magnitude</span>
+      </div>
+    </div>
+    <div class="hm-table-wrap">
+      <h3>Nifty 50 Benchmark</h3>
+      <table class="hm">
+        <thead><tr><th>Year</th><th>Jan</th><th>Feb</th><th>Mar</th><th>Apr</th><th>May</th><th>Jun</th><th>Jul</th><th>Aug</th><th>Sep</th><th>Oct</th><th>Nov</th><th>Dec</th><th>YTD</th></tr></thead>
+        <tbody>
+        
+          <tr>
+            <td class="hm-year">2023</td>
+            
+              
+              
+                
+                
+                <td class="neg"
+                    style="background: rgba(255,101,132,0.95);">
+                  -2.9
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="neg"
+                    style="background: rgba(255,101,132,0.76);">
+                  -2.0
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.19);">
+                  0.3
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  4.1
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  2.6
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  3.5
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  2.9
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="neg"
+                    style="background: rgba(255,101,132,0.92);">
+                  -2.5
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.75);">
+                  2.0
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="neg"
+                    style="background: rgba(255,101,132,0.95);">
+                  -2.8
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  5.5
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  7.9
+                </td>
+              
+            
+            
+            <td class="hm-ytd pos"
+                style="background: rgba(72,229,194,0.16);">
+              19.4
+            </td>
+          </tr>
+        
+          <tr>
+            <td class="hm-year">2024</td>
+            
+              
+              
+                
+                
+                <td class="neg"
+                    style="background: rgba(255,101,132,0.09);">
+                  -0.0
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.47);">
+                  1.2
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.60);">
+                  1.6
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.49);">
+                  1.2
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="neg"
+                    style="background: rgba(255,101,132,0.19);">
+                  -0.3
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  6.6
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  3.9
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.46);">
+                  1.1
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.84);">
+                  2.3
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="neg"
+                    style="background: rgba(255,101,132,0.95);">
+                  -6.2
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="neg"
+                    style="background: rgba(255,101,132,0.18);">
+                  -0.3
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="neg"
+                    style="background: rgba(255,101,132,0.75);">
+                  -2.0
+                </td>
+              
+            
+            
+            <td class="hm-ytd pos"
+                style="background: rgba(72,229,194,0.16);">
+              8.8
+            </td>
+          </tr>
+        
+          <tr>
+            <td class="hm-year">2025</td>
+            
+              
+              
+                
+                
+                <td class="neg"
+                    style="background: rgba(255,101,132,0.27);">
+                  -0.6
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="neg"
+                    style="background: rgba(255,101,132,0.95);">
+                  -5.9
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  6.3
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  3.5
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.65);">
+                  1.7
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  3.1
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="neg"
+                    style="background: rgba(255,101,132,0.95);">
+                  -2.9
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="neg"
+                    style="background: rgba(255,101,132,0.54);">
+                  -1.4
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.33);">
+                  0.8
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.95);">
+                  4.5
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.70);">
+                  1.9
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="neg"
+                    style="background: rgba(255,101,132,0.17);">
+                  -0.3
+                </td>
+              
+            
+            
+            <td class="hm-ytd pos"
+                style="background: rgba(72,229,194,0.16);">
+              10.5
+            </td>
+          </tr>
+        
+          <tr>
+            <td class="hm-year">2026</td>
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.10);">
+                  0.1
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.08);">
+                  0.0
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.08);">
+                  0.0
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.08);">
+                  0.0
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.08);">
+                  0.0
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.08);">
+                  0.0
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.08);">
+                  0.0
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.08);">
+                  0.0
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.08);">
+                  0.0
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.08);">
+                  0.0
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.08);">
+                  0.0
+                </td>
+              
+            
+              
+              
+                
+                
+                <td class="pos"
+                    style="background: rgba(72,229,194,0.08);">
+                  0.0
+                </td>
+              
+            
+            
+            <td class="hm-ytd pos"
+                style="background: rgba(72,229,194,0.16);">
+              0.1
+            </td>
+          </tr>
+        
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- TRADE LOG -->
+<div class="section">
+  <div class="section-title">📋 Trade Log — Portfolio Holdings per Rebalance</div>
+  <div class="table-wrapper">
+    <table class="log">
+      <thead>
+        <tr>
+          <th>Rebalance Date</th>
+          <th>Holdings (15)</th>
+          <th>Size</th>
+          <th>Equity (₹)</th>
+        </tr>
+      </thead>
+      <tbody>
+        
+        <tr>
+          <td class="mono">2023-02-01</td>
+          <td class="holdings">
+            <span class="sym">TATASTEEL</span> · <span class="sym">HCLTECH</span> · <span class="sym">ITC</span> · <span class="sym">COFORGE</span> · <span class="sym">TCS</span> · <span class="sym">HDFCBANK</span> · <span class="sym">PERSISTENT</span> · <span class="sym">M&M</span> · <span class="sym">INFY</span> · <span class="sym">KPITTECH</span> · <span class="sym">LT</span> · <span class="sym">IOC</span> · <span class="sym">CHOLAFIN</span> · <span class="sym">WIPRO</span> · <span class="sym">ONGC</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹99,918</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2023-03-01</td>
+          <td class="holdings">
+            <span class="sym">ITC</span> · <span class="sym">ONGC</span> · <span class="sym">KPITTECH</span> · <span class="sym">NTPC</span> · <span class="sym">PFC</span> · <span class="sym">POWERGRID</span> · <span class="sym">TECHM</span> · <span class="sym">FEDERALBNK</span> · <span class="sym">SHREECEM</span> · <span class="sym">ICICIBANK</span> · <span class="sym">PERSISTENT</span> · <span class="sym">COFORGE</span> · <span class="sym">HDFCBANK</span> · <span class="sym">AXISBANK</span> · <span class="sym">BANKBARODA</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹99,838</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2023-03-31</td>
+          <td class="holdings">
+            <span class="sym">KPITTECH</span> · <span class="sym">ITC</span> · <span class="sym">PAYTM</span> · <span class="sym">ICICIBANK</span> · <span class="sym">NTPC</span> · <span class="sym">BANKBARODA</span> · <span class="sym">PFC</span> · <span class="sym">HDFCBANK</span> · <span class="sym">DRREDDY</span> · <span class="sym">ULTRACEMCO</span> · <span class="sym">POWERGRID</span> · <span class="sym">GODREJCP</span> · <span class="sym">HINDUNILVR</span> · <span class="sym">BPCL</span> · <span class="sym">LT</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹103,649</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2023-04-28</td>
+          <td class="holdings">
+            <span class="sym">BANKBARODA</span> · <span class="sym">ITC</span> · <span class="sym">CHOLAFIN</span> · <span class="sym">PFC</span> · <span class="sym">LT</span> · <span class="sym">KPITTECH</span> · <span class="sym">KOTAKBANK</span> · <span class="sym">BAJAJ-AUTO</span> · <span class="sym">ICICIBANK</span> · <span class="sym">SBIN</span> · <span class="sym">CANBK</span> · <span class="sym">NESTLEIND</span> · <span class="sym">RECLTD</span> · <span class="sym">HDFCBANK</span> · <span class="sym">IDFCFIRSTB</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹108,517</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2023-06-01</td>
+          <td class="holdings">
+            <span class="sym">IDFCFIRSTB</span> · <span class="sym">INDUSINDBK</span> · <span class="sym">PFC</span> · <span class="sym">KPITTECH</span> · <span class="sym">CHOLAFIN</span> · <span class="sym">ITC</span> · <span class="sym">ADANIENT</span> · <span class="sym">AUROPHARMA</span> · <span class="sym">ASTRAL</span> · <span class="sym">NAUKRI</span> · <span class="sym">RECLTD</span> · <span class="sym">BANKBARODA</span> · <span class="sym">BAJFINANCE</span> · <span class="sym">INDIGO</span> · <span class="sym">TITAN</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹116,889</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2023-06-30</td>
+          <td class="holdings">
+            <span class="sym">IDFCFIRSTB</span> · <span class="sym">PFC</span> · <span class="sym">RECLTD</span> · <span class="sym">PAYTM</span> · <span class="sym">INDUSINDBK</span> · <span class="sym">HDFCLIFE</span> · <span class="sym">INDIGO</span> · <span class="sym">AUROPHARMA</span> · <span class="sym">M&M</span> · <span class="sym">LT</span> · <span class="sym">JSWSTEEL</span> · <span class="sym">CHOLAFIN</span> · <span class="sym">BANKBARODA</span> · <span class="sym">AXISBANK</span> · <span class="sym">POWERGRID</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹122,598</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2023-08-01</td>
+          <td class="holdings">
+            <span class="sym">IDFCFIRSTB</span> · <span class="sym">POLYCAB</span> · <span class="sym">RECLTD</span> · <span class="sym">NTPC</span> · <span class="sym">PFC</span> · <span class="sym">PNB</span> · <span class="sym">AUROPHARMA</span> · <span class="sym">LT</span> · <span class="sym">CANBK</span> · <span class="sym">DRREDDY</span> · <span class="sym">TATASTEEL</span> · <span class="sym">CIPLA</span> · <span class="sym">ICICIBANK</span> · <span class="sym">SUNPHARMA</span> · <span class="sym">COLPAL</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹126,379</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2023-09-01</td>
+          <td class="holdings">
+            <span class="sym">RECLTD</span> · <span class="sym">IDFCFIRSTB</span> · <span class="sym">COFORGE</span> · <span class="sym">PNB</span> · <span class="sym">DIXON</span> · <span class="sym">NTPC</span> · <span class="sym">TATASTEEL</span> · <span class="sym">PFC</span> · <span class="sym">M&M</span> · <span class="sym">POLYCAB</span> · <span class="sym">FEDERALBNK</span> · <span class="sym">LUPIN</span> · <span class="sym">AXISBANK</span> · <span class="sym">CIPLA</span> · <span class="sym">PAYTM</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹133,289</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2023-09-29</td>
+          <td class="holdings">
+            <span class="sym">PNB</span> · <span class="sym">RECLTD</span> · <span class="sym">PFC</span> · <span class="sym">CANBK</span> · <span class="sym">NTPC</span> · <span class="sym">COALINDIA</span> · <span class="sym">BANKBARODA</span> · <span class="sym">LT</span> · <span class="sym">IDFCFIRSTB</span> · <span class="sym">AUROPHARMA</span> · <span class="sym">TATASTEEL</span> · <span class="sym">ONGC</span> · <span class="sym">CHOLAFIN</span> · <span class="sym">BAJFINANCE</span> · <span class="sym">AXISBANK</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹126,489</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2023-11-01</td>
+          <td class="holdings">
+            <span class="sym">CANBK</span> · <span class="sym">RECLTD</span> · <span class="sym">GSFC</span> · <span class="sym">PERSISTENT</span> · <span class="sym">COALINDIA</span> · <span class="sym">PAYTM</span> · <span class="sym">HCLTECH</span> · <span class="sym">PFC</span> · <span class="sym">KPITTECH</span> · <span class="sym">BAJAJ-AUTO</span> · <span class="sym">INDUSINDBK</span> · <span class="sym">PNB</span> · <span class="sym">NESTLEIND</span> · <span class="sym">POWERGRID</span> · <span class="sym">GNFC</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹140,234</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2023-12-01</td>
+          <td class="holdings">
+            <span class="sym">PFC</span> · <span class="sym">RECLTD</span> · <span class="sym">IOC</span> · <span class="sym">COALINDIA</span> · <span class="sym">AUROPHARMA</span> · <span class="sym">NTPC</span> · <span class="sym">PNB</span> · <span class="sym">KPITTECH</span> · <span class="sym">LUPIN</span> · <span class="sym">AXISBANK</span> · <span class="sym">BPCL</span> · <span class="sym">HEROMOTOCO</span> · <span class="sym">LT</span> · <span class="sym">DIXON</span> · <span class="sym">BAJAJ-AUTO</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹153,261</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2024-01-01</td>
+          <td class="holdings">
+            <span class="sym">IRCTC</span> · <span class="sym">PNB</span> · <span class="sym">NTPC</span> · <span class="sym">RECLTD</span> · <span class="sym">IOC</span> · <span class="sym">PFC</span> · <span class="sym">COALINDIA</span> · <span class="sym">GSFC</span> · <span class="sym">POWERGRID</span> · <span class="sym">ADANIPORTS</span> · <span class="sym">HINDALCO</span> · <span class="sym">CHAMBLFERT</span> · <span class="sym">BPCL</span> · <span class="sym">PERSISTENT</span> · <span class="sym">BANKBARODA</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹167,808</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2024-02-01</td>
+          <td class="holdings">
+            <span class="sym">RECLTD</span> · <span class="sym">PFC</span> · <span class="sym">PNB</span> · <span class="sym">IOC</span> · <span class="sym">ONGC</span> · <span class="sym">ADANIPORTS</span> · <span class="sym">BPCL</span> · <span class="sym">NTPC</span> · <span class="sym">OFSS</span> · <span class="sym">CANBK</span> · <span class="sym">COALINDIA</span> · <span class="sym">POWERGRID</span> · <span class="sym">BANKBARODA</span> · <span class="sym">IRCTC</span> · <span class="sym">BAJAJ-AUTO</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹181,021</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2024-03-01</td>
+          <td class="holdings">
+            <span class="sym">CANBK</span> · <span class="sym">BPCL</span> · <span class="sym">PNB</span> · <span class="sym">IOC</span> · <span class="sym">POWERGRID</span> · <span class="sym">SBIN</span> · <span class="sym">ONGC</span> · <span class="sym">COALINDIA</span> · <span class="sym">NTPC</span> · <span class="sym">ADANIPORTS</span> · <span class="sym">BANKBARODA</span> · <span class="sym">M&M</span> · <span class="sym">TATASTEEL</span> · <span class="sym">AMBUJACEM</span> · <span class="sym">LT</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹182,087</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2024-04-01</td>
+          <td class="holdings">
+            <span class="sym">TATASTEEL</span> · <span class="sym">INDIGO</span> · <span class="sym">ADANIPORTS</span> · <span class="sym">PNB</span> · <span class="sym">CANBK</span> · <span class="sym">BAJAJ-AUTO</span> · <span class="sym">LT</span> · <span class="sym">OFSS</span> · <span class="sym">BHARTIARTL</span> · <span class="sym">RECLTD</span> · <span class="sym">SUNPHARMA</span> · <span class="sym">NTPC</span> · <span class="sym">DIXON</span> · <span class="sym">MARUTI</span> · <span class="sym">ONGC</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹186,533</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2024-04-30</td>
+          <td class="holdings">
+            <span class="sym">PNB</span> · <span class="sym">SBIN</span> · <span class="sym">RECLTD</span> · <span class="sym">CANBK</span> · <span class="sym">VOLTAS</span> · <span class="sym">POWERGRID</span> · <span class="sym">M&M</span> · <span class="sym">INDIGO</span> · <span class="sym">NTPC</span> · <span class="sym">ONGC</span> · <span class="sym">PFC</span> · <span class="sym">TATASTEEL</span> · <span class="sym">HINDALCO</span> · <span class="sym">BHARTIARTL</span> · <span class="sym">DIXON</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹191,585</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2024-05-31</td>
+          <td class="holdings">
+            <span class="sym">PFC</span> · <span class="sym">M&M</span> · <span class="sym">RECLTD</span> · <span class="sym">COALINDIA</span> · <span class="sym">ADANIPORTS</span> · <span class="sym">HINDALCO</span> · <span class="sym">BHARTIARTL</span> · <span class="sym">DIXON</span> · <span class="sym">SBIN</span> · <span class="sym">ADANIENT</span> · <span class="sym">TATASTEEL</span> · <span class="sym">ABFRL</span> · <span class="sym">POWERGRID</span> · <span class="sym">HEROMOTOCO</span> · <span class="sym">LT</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹202,811</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2024-07-01</td>
+          <td class="holdings">
+            <span class="sym">CHAMBLFERT</span> · <span class="sym">M&M</span> · <span class="sym">DIXON</span> · <span class="sym">OFSS</span> · <span class="sym">POWERGRID</span> · <span class="sym">BHARTIARTL</span> · <span class="sym">AMBUJACEM</span> · <span class="sym">HDFCBANK</span> · <span class="sym">RECLTD</span> · <span class="sym">ULTRACEMCO</span> · <span class="sym">ADANIPORTS</span> · <span class="sym">ICICIBANK</span> · <span class="sym">RELIANCE</span> · <span class="sym">AXISBANK</span> · <span class="sym">NAUKRI</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹205,089</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2024-08-01</td>
+          <td class="holdings">
+            <span class="sym">ONGC</span> · <span class="sym">RECLTD</span> · <span class="sym">NTPC</span> · <span class="sym">BPCL</span> · <span class="sym">COALINDIA</span> · <span class="sym">POWERGRID</span> · <span class="sym">FEDERALBNK</span> · <span class="sym">INFY</span> · <span class="sym">ADANIPORTS</span> · <span class="sym">IOC</span> · <span class="sym">PFC</span> · <span class="sym">LUPIN</span> · <span class="sym">SBILIFE</span> · <span class="sym">HDFCLIFE</span> · <span class="sym">M&M</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹206,740</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2024-08-30</td>
+          <td class="holdings">
+            <span class="sym">VOLTAS</span> · <span class="sym">DIXON</span> · <span class="sym">BHARTIARTL</span> · <span class="sym">BALRAMCHIN</span> · <span class="sym">LUPIN</span> · <span class="sym">INDIGO</span> · <span class="sym">INFY</span> · <span class="sym">BPCL</span> · <span class="sym">PAYTM</span> · <span class="sym">NAUKRI</span> · <span class="sym">AUROPHARMA</span> · <span class="sym">HCLTECH</span> · <span class="sym">PERSISTENT</span> · <span class="sym">ONGC</span> · <span class="sym">NTPC</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹214,205</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2024-10-01</td>
+          <td class="holdings">
+            <span class="sym">M&M</span> · <span class="sym">NTPC</span> · <span class="sym">BHARTIARTL</span> · <span class="sym">PAYTM</span> · <span class="sym">BPCL</span> · <span class="sym">HINDALCO</span> · <span class="sym">DIXON</span> · <span class="sym">BALRAMCHIN</span> · <span class="sym">COFORGE</span> · <span class="sym">BAJAJ-AUTO</span> · <span class="sym">NAUKRI</span> · <span class="sym">BAJAJFINSV</span> · <span class="sym">SUNPHARMA</span> · <span class="sym">ABFRL</span> · <span class="sym">COLPAL</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹197,722</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2024-11-01</td>
+          <td class="holdings">
+            <span class="sym">COFORGE</span> · <span class="sym">ICICIBANK</span> · <span class="sym">WIPRO</span> · <span class="sym">HDFCBANK</span> · <span class="sym">PAYTM</span> · <span class="sym">FEDERALBNK</span> · <span class="sym">DIXON</span> · <span class="sym">SBIN</span> · <span class="sym">DIVISLAB</span> · <span class="sym">HCLTECH</span> · <span class="sym">LUPIN</span> · <span class="sym">BHARTIARTL</span> · <span class="sym">TATACHEM</span> · <span class="sym">NTPC</span> · <span class="sym">TECHM</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹204,638</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2024-11-29</td>
+          <td class="holdings">
+            <span class="sym">PAYTM</span> · <span class="sym">DIXON</span> · <span class="sym">M&M</span> · <span class="sym">HDFCBANK</span> · <span class="sym">COFORGE</span> · <span class="sym">NAUKRI</span> · <span class="sym">FEDERALBNK</span> · <span class="sym">WIPRO</span> · <span class="sym">DIVISLAB</span> · <span class="sym">BHARTIARTL</span> · <span class="sym">SBIN</span> · <span class="sym">POWERGRID</span> · <span class="sym">ICICIBANK</span> · <span class="sym">PERSISTENT</span> · <span class="sym">LT</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹209,098</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2025-01-01</td>
+          <td class="holdings">
+            <span class="sym">PAYTM</span> · <span class="sym">COFORGE</span> · <span class="sym">DRREDDY</span> · <span class="sym">M&M</span> · <span class="sym">SUNPHARMA</span> · <span class="sym">WIPRO</span> · <span class="sym">LUPIN</span> · <span class="sym">HCLTECH</span> · <span class="sym">JUBLFOOD</span> · <span class="sym">DIXON</span> · <span class="sym">ITC</span> · <span class="sym">NAUKRI</span> · <span class="sym">INFY</span> · <span class="sym">ICICIBANK</span> · <span class="sym">HDFCBANK</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹192,663</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2025-02-01</td>
+          <td class="holdings">
+            <span class="sym">BAJFINANCE</span> · <span class="sym">WIPRO</span> · <span class="sym">KOTAKBANK</span> · <span class="sym">SRF</span> · <span class="sym">M&M</span> · <span class="sym">MARUTI</span> · <span class="sym">NAVINFLUOR</span> · <span class="sym">BHARTIARTL</span> · <span class="sym">INDIGO</span> · <span class="sym">ICICIBANK</span> · <span class="sym">EICHERMOT</span> · <span class="sym">ITC</span> · <span class="sym">HDFCBANK</span> · <span class="sym">MARICO</span> · <span class="sym">HINDUNILVR</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹180,735</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2025-02-28</td>
+          <td class="holdings">
+            <span class="sym">BAJFINANCE</span> · <span class="sym">HDFCBANK</span> · <span class="sym">KOTAKBANK</span> · <span class="sym">BAJAJFINSV</span> · <span class="sym">HINDALCO</span> · <span class="sym">CHOLAFIN</span> · <span class="sym">CHAMBLFERT</span> · <span class="sym">TATASTEEL</span> · <span class="sym">INDIGO</span> · <span class="sym">BHARTIARTL</span> · <span class="sym">AXISBANK</span> · <span class="sym">ICICIBANK</span> · <span class="sym">JSWSTEEL</span> · <span class="sym">SRF</span> · <span class="sym">MUTHOOTFIN</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹195,249</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2025-04-01</td>
+          <td class="holdings">
+            <span class="sym">KOTAKBANK</span> · <span class="sym">INDIGO</span> · <span class="sym">ICICIBANK</span> · <span class="sym">BHARTIARTL</span> · <span class="sym">TATASTEEL</span> · <span class="sym">HDFCBANK</span> · <span class="sym">CHAMBLFERT</span> · <span class="sym">BAJFINANCE</span> · <span class="sym">NTPC</span> · <span class="sym">BAJAJFINSV</span> · <span class="sym">HDFCLIFE</span> · <span class="sym">SBIN</span> · <span class="sym">COROMANDEL</span> · <span class="sym">PAYTM</span> · <span class="sym">JSWSTEEL</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹203,012</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2025-04-30</td>
+          <td class="holdings">
+            <span class="sym">ICICIBANK</span> · <span class="sym">HDFCBANK</span> · <span class="sym">BHARTIARTL</span> · <span class="sym">AXISBANK</span> · <span class="sym">RELIANCE</span> · <span class="sym">DIXON</span> · <span class="sym">PAYTM</span> · <span class="sym">KOTAKBANK</span> · <span class="sym">BPCL</span> · <span class="sym">CHAMBLFERT</span> · <span class="sym">M&M</span> · <span class="sym">COROMANDEL</span> · <span class="sym">SBILIFE</span> · <span class="sym">HDFCLIFE</span> · <span class="sym">TATACONSUM</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹200,154</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2025-05-30</td>
+          <td class="holdings">
+            <span class="sym">ADANIPORTS</span> · <span class="sym">CANBK</span> · <span class="sym">COFORGE</span> · <span class="sym">TATASTEEL</span> · <span class="sym">BAJFINANCE</span> · <span class="sym">DIVISLAB</span> · <span class="sym">HDFCBANK</span> · <span class="sym">ICICIBANK</span> · <span class="sym">PAYTM</span> · <span class="sym">HDFCLIFE</span> · <span class="sym">SBIN</span> · <span class="sym">LT</span> · <span class="sym">BHARTIARTL</span> · <span class="sym">COROMANDEL</span> · <span class="sym">INDIGO</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹208,529</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2025-07-01</td>
+          <td class="holdings">
+            <span class="sym">BHARTIARTL</span> · <span class="sym">INDIGO</span> · <span class="sym">RELIANCE</span> · <span class="sym">HDFCBANK</span> · <span class="sym">HDFCLIFE</span> · <span class="sym">COFORGE</span> · <span class="sym">IDFCFIRSTB</span> · <span class="sym">CANBK</span> · <span class="sym">PNB</span> · <span class="sym">M&M</span> · <span class="sym">BPCL</span> · <span class="sym">MUTHOOTFIN</span> · <span class="sym">SRF</span> · <span class="sym">FEDERALBNK</span> · <span class="sym">KOTAKBANK</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹195,215</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2025-08-01</td>
+          <td class="holdings">
+            <span class="sym">PAYTM</span> · <span class="sym">HDFCBANK</span> · <span class="sym">ICICIBANK</span> · <span class="sym">COROMANDEL</span> · <span class="sym">DIXON</span> · <span class="sym">HINDUNILVR</span> · <span class="sym">TORNTPHARM</span> · <span class="sym">INDIGO</span> · <span class="sym">LT</span> · <span class="sym">M&M</span> · <span class="sym">AMBUJACEM</span> · <span class="sym">SBIN</span> · <span class="sym">HINDALCO</span> · <span class="sym">CANBK</span> · <span class="sym">JSWSTEEL</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹196,044</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2025-09-01</td>
+          <td class="holdings">
+            <span class="sym">PAYTM</span> · <span class="sym">HEROMOTOCO</span> · <span class="sym">MARUTI</span> · <span class="sym">EICHERMOT</span> · <span class="sym">DIXON</span> · <span class="sym">M&M</span> · <span class="sym">HINDALCO</span> · <span class="sym">HINDUNILVR</span> · <span class="sym">BHARTIARTL</span> · <span class="sym">DMART</span> · <span class="sym">MUTHOOTFIN</span> · <span class="sym">ULTRACEMCO</span> · <span class="sym">COFORGE</span> · <span class="sym">MARICO</span> · <span class="sym">BRITANNIA</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹196,670</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2025-10-01</td>
+          <td class="holdings">
+            <span class="sym">CANBK</span> · <span class="sym">SBIN</span> · <span class="sym">BANKBARODA</span> · <span class="sym">BAJFINANCE</span> · <span class="sym">HINDALCO</span> · <span class="sym">M&M</span> · <span class="sym">BPCL</span> · <span class="sym">MARUTI</span> · <span class="sym">EICHERMOT</span> · <span class="sym">TATASTEEL</span> · <span class="sym">PNB</span> · <span class="sym">MUTHOOTFIN</span> · <span class="sym">AXISBANK</span> · <span class="sym">JSWSTEEL</span> · <span class="sym">CHOLAFIN</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹208,007</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2025-10-31</td>
+          <td class="holdings">
+            <span class="sym">CANBK</span> · <span class="sym">HINDALCO</span> · <span class="sym">PAYTM</span> · <span class="sym">TATASTEEL</span> · <span class="sym">SBIN</span> · <span class="sym">IDFCFIRSTB</span> · <span class="sym">FEDERALBNK</span> · <span class="sym">PNB</span> · <span class="sym">BHARTIARTL</span> · <span class="sym">LT</span> · <span class="sym">RELIANCE</span> · <span class="sym">BANKBARODA</span> · <span class="sym">IOC</span> · <span class="sym">TITAN</span> · <span class="sym">BAJFINANCE</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹212,143</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2025-12-01</td>
+          <td class="holdings">
+            <span class="sym">CANBK</span> · <span class="sym">PAYTM</span> · <span class="sym">RELIANCE</span> · <span class="sym">BANKBARODA</span> · <span class="sym">SBIN</span> · <span class="sym">HEROMOTOCO</span> · <span class="sym">MUTHOOTFIN</span> · <span class="sym">M&M</span> · <span class="sym">FEDERALBNK</span> · <span class="sym">PNB</span> · <span class="sym">ADANIPORTS</span> · <span class="sym">IDFCFIRSTB</span> · <span class="sym">AXISBANK</span> · <span class="sym">ASIANPAINT</span> · <span class="sym">BHARTIARTL</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹211,732</td>
+        </tr>
+        
+        <tr>
+          <td class="mono">2026-01-01</td>
+          <td class="holdings">
+            <span class="sym">HINDALCO</span> · <span class="sym">CANBK</span> · <span class="sym">TATASTEEL</span> · <span class="sym">IDFCFIRSTB</span> · <span class="sym">FEDERALBNK</span> · <span class="sym">BPCL</span> · <span class="sym">RELIANCE</span> · <span class="sym">IOC</span> · <span class="sym">SBIN</span> · <span class="sym">KOTAKBANK</span> · <span class="sym">TITAN</span> · <span class="sym">BANKBARODA</span> · <span class="sym">M&M</span> · <span class="sym">LT</span> · <span class="sym">EICHERMOT</span>
+          </td>
+          <td class="mono">15</td>
+          <td class="cap">₹211,619</td>
+        </tr>
+        
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- FACTOR NOTES -->
+
+<div class="section">
+  <div class="section-title">🧮 Point-in-Time Factors Used</div>
+  <div class="section-sub">
+    Price-derived factors renormalized from the live engine weights
+    
+      <span class="param-pill">momentum_score <b>45.5%</b></span>
+    
+      <span class="param-pill">technical_score <b>27.3%</b></span>
+    
+      <span class="param-pill">liquidity_score <b>27.3%</b></span>
+    
+    — quality/value/F&amp;O/events are excluded (current-snapshot data would leak lookahead).
+  </div>
+</div>
+
+
+<footer>
+  Generated by Stock Scoring Engine · Point-in-Time Backtester · NSE data via Yahoo Finance · 20260816_130419
+  <br />
+  <span class="warn">⚠ Survivorship bias: universe reflects current Nifty 500 constituents; delisted/removed names are excluded.</span>
+</footer>
+
+<script>
+// ── Data ────────────────────────────────────────────────────
+const equityDates  = ["2023-01-02", "2023-01-03", "2023-01-04", "2023-01-05", "2023-01-06", "2023-01-09", "2023-01-10", "2023-01-11", "2023-01-12", "2023-01-13", "2023-01-16", "2023-01-17", "2023-01-18", "2023-01-19", "2023-01-20", "2023-01-23", "2023-01-24", "2023-01-25", "2023-01-27", "2023-01-30", "2023-01-31", "2023-02-01", "2023-02-02", "2023-02-03", "2023-02-06", "2023-02-07", "2023-02-08", "2023-02-09", "2023-02-10", "2023-02-13", "2023-02-14", "2023-02-15", "2023-02-16", "2023-02-17", "2023-02-20", "2023-02-21", "2023-02-22", "2023-02-23", "2023-02-24", "2023-02-27", "2023-02-28", "2023-03-01", "2023-03-02", "2023-03-03", "2023-03-06", "2023-03-08", "2023-03-09", "2023-03-10", "2023-03-13", "2023-03-14", "2023-03-15", "2023-03-16", "2023-03-17", "2023-03-20", "2023-03-21", "2023-03-22", "2023-03-23", "2023-03-24", "2023-03-27", "2023-03-28", "2023-03-29", "2023-03-31", "2023-04-03", "2023-04-05", "2023-04-06", "2023-04-10", "2023-04-11", "2023-04-12", "2023-04-13", "2023-04-17", "2023-04-18", "2023-04-19", "2023-04-20", "2023-04-21", "2023-04-24", "2023-04-25", "2023-04-26", "2023-04-27", "2023-04-28", "2023-05-02", "2023-05-03", "2023-05-04", "2023-05-05", "2023-05-08", "2023-05-09", "2023-05-10", "2023-05-11", "2023-05-12", "2023-05-15", "2023-05-16", "2023-05-17", "2023-05-18", "2023-05-19", "2023-05-22", "2023-05-23", "2023-05-24", "2023-05-25", "2023-05-26", "2023-05-29", "2023-05-30", "2023-05-31", "2023-06-01", "2023-06-02", "2023-06-05", "2023-06-06", "2023-06-07", "2023-06-08", "2023-06-09", "2023-06-12", "2023-06-13", "2023-06-14", "2023-06-15", "2023-06-16", "2023-06-19", "2023-06-20", "2023-06-21", "2023-06-22", "2023-06-23", "2023-06-26", "2023-06-27", "2023-06-28", "2023-06-30", "2023-07-03", "2023-07-04", "2023-07-05", "2023-07-06", "2023-07-07", "2023-07-10", "2023-07-11", "2023-07-12", "2023-07-13", "2023-07-14", "2023-07-17", "2023-07-18", "2023-07-19", "2023-07-20", "2023-07-21", "2023-07-24", "2023-07-25", "2023-07-26", "2023-07-27", "2023-07-28", "2023-07-31", "2023-08-01", "2023-08-02", "2023-08-03", "2023-08-04", "2023-08-07", "2023-08-08", "2023-08-09", "2023-08-10", "2023-08-11", "2023-08-14", "2023-08-16", "2023-08-17", "2023-08-18", "2023-08-21", "2023-08-22", "2023-08-23", "2023-08-24", "2023-08-25", "2023-08-28", "2023-08-29", "2023-08-30", "2023-08-31", "2023-09-01", "2023-09-04", "2023-09-05", "2023-09-06", "2023-09-07", "2023-09-08", "2023-09-11", "2023-09-12", "2023-09-13", "2023-09-14", "2023-09-15", "2023-09-18", "2023-09-20", "2023-09-21", "2023-09-22", "2023-09-25", "2023-09-26", "2023-09-27", "2023-09-28", "2023-09-29", "2023-10-03", "2023-10-04", "2023-10-05", "2023-10-06", "2023-10-09", "2023-10-10", "2023-10-11", "2023-10-12", "2023-10-13", "2023-10-16", "2023-10-17", "2023-10-18", "2023-10-19", "2023-10-20", "2023-10-23", "2023-10-25", "2023-10-26", "2023-10-27", "2023-10-30", "2023-10-31", "2023-11-01", "2023-11-02", "2023-11-03", "2023-11-06", "2023-11-07", "2023-11-08", "2023-11-09", "2023-11-10", "2023-11-13", "2023-11-15", "2023-11-16", "2023-11-17", "2023-11-20", "2023-11-21", "2023-11-22", "2023-11-23", "2023-11-24", "2023-11-28", "2023-11-29", "2023-11-30", "2023-12-01", "2023-12-04", "2023-12-05", "2023-12-06", "2023-12-07", "2023-12-08", "2023-12-11", "2023-12-12", "2023-12-13", "2023-12-14", "2023-12-15", "2023-12-18", "2023-12-19", "2023-12-20", "2023-12-21", "2023-12-22", "2023-12-26", "2023-12-27", "2023-12-28", "2023-12-29", "2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-08", "2024-01-09", "2024-01-10", "2024-01-11", "2024-01-12", "2024-01-15", "2024-01-16", "2024-01-17", "2024-01-18", "2024-01-19", "2024-01-23", "2024-01-24", "2024-01-25", "2024-01-29", "2024-01-30", "2024-01-31", "2024-02-01", "2024-02-02", "2024-02-05", "2024-02-06", "2024-02-07", "2024-02-08", "2024-02-09", "2024-02-12", "2024-02-13", "2024-02-14", "2024-02-15", "2024-02-16", "2024-02-19", "2024-02-20", "2024-02-21", "2024-02-22", "2024-02-23", "2024-02-26", "2024-02-27", "2024-02-28", "2024-02-29", "2024-03-01", "2024-03-04", "2024-03-05", "2024-03-06", "2024-03-07", "2024-03-11", "2024-03-12", "2024-03-13", "2024-03-14", "2024-03-15", "2024-03-18", "2024-03-19", "2024-03-20", "2024-03-21", "2024-03-22", "2024-03-26", "2024-03-27", "2024-03-28", "2024-04-01", "2024-04-02", "2024-04-03", "2024-04-04", "2024-04-05", "2024-04-08", "2024-04-09", "2024-04-10", "2024-04-12", "2024-04-15", "2024-04-16", "2024-04-18", "2024-04-19", "2024-04-22", "2024-04-23", "2024-04-24", "2024-04-25", "2024-04-26", "2024-04-29", "2024-04-30", "2024-05-02", "2024-05-03", "2024-05-06", "2024-05-07", "2024-05-08", "2024-05-09", "2024-05-10", "2024-05-13", "2024-05-14", "2024-05-15", "2024-05-16", "2024-05-17", "2024-05-21", "2024-05-22", "2024-05-23", "2024-05-24", "2024-05-27", "2024-05-28", "2024-05-29", "2024-05-30", "2024-05-31", "2024-06-03", "2024-06-04", "2024-06-05", "2024-06-06", "2024-06-07", "2024-06-10", "2024-06-11", "2024-06-12", "2024-06-13", "2024-06-14", "2024-06-18", "2024-06-19", "2024-06-20", "2024-06-21", "2024-06-24", "2024-06-25", "2024-06-26", "2024-06-27", "2024-06-28", "2024-07-01", "2024-07-02", "2024-07-03", "2024-07-04", "2024-07-05", "2024-07-08", "2024-07-09", "2024-07-10", "2024-07-11", "2024-07-12", "2024-07-15", "2024-07-16", "2024-07-18", "2024-07-19", "2024-07-22", "2024-07-23", "2024-07-24", "2024-07-25", "2024-07-26", "2024-07-29", "2024-07-30", "2024-07-31", "2024-08-01", "2024-08-02", "2024-08-05", "2024-08-06", "2024-08-07", "2024-08-08", "2024-08-09", "2024-08-12", "2024-08-13", "2024-08-14", "2024-08-16", "2024-08-19", "2024-08-20", "2024-08-21", "2024-08-22", "2024-08-23", "2024-08-26", "2024-08-27", "2024-08-28", "2024-08-29", "2024-08-30", "2024-09-02", "2024-09-03", "2024-09-04", "2024-09-05", "2024-09-06", "2024-09-09", "2024-09-10", "2024-09-11", "2024-09-12", "2024-09-13", "2024-09-16", "2024-09-17", "2024-09-18", "2024-09-19", "2024-09-20", "2024-09-23", "2024-09-24", "2024-09-25", "2024-09-26", "2024-09-27", "2024-09-30", "2024-10-01", "2024-10-03", "2024-10-04", "2024-10-07", "2024-10-08", "2024-10-09", "2024-10-10", "2024-10-11", "2024-10-14", "2024-10-15", "2024-10-16", "2024-10-17", "2024-10-18", "2024-10-21", "2024-10-22", "2024-10-23", "2024-10-24", "2024-10-25", "2024-10-28", "2024-10-29", "2024-10-30", "2024-10-31", "2024-11-01", "2024-11-04", "2024-11-05", "2024-11-06", "2024-11-07", "2024-11-08", "2024-11-11", "2024-11-12", "2024-11-13", "2024-11-14", "2024-11-18", "2024-11-19", "2024-11-21", "2024-11-22", "2024-11-25", "2024-11-26", "2024-11-27", "2024-11-28", "2024-11-29", "2024-12-02", "2024-12-03", "2024-12-04", "2024-12-05", "2024-12-06", "2024-12-09", "2024-12-10", "2024-12-11", "2024-12-12", "2024-12-13", "2024-12-16", "2024-12-17", "2024-12-18", "2024-12-19", "2024-12-20", "2024-12-23", "2024-12-24", "2024-12-26", "2024-12-27", "2024-12-30", "2024-12-31", "2025-01-01", "2025-01-02", "2025-01-03", "2025-01-06", "2025-01-07", "2025-01-08", "2025-01-09", "2025-01-10", "2025-01-13", "2025-01-14", "2025-01-15", "2025-01-16", "2025-01-17", "2025-01-20", "2025-01-21", "2025-01-22", "2025-01-23", "2025-01-24", "2025-01-27", "2025-01-28", "2025-01-29", "2025-01-30", "2025-01-31", "2025-02-01", "2025-02-03", "2025-02-04", "2025-02-05", "2025-02-06", "2025-02-07", "2025-02-10", "2025-02-11", "2025-02-12", "2025-02-13", "2025-02-14", "2025-02-17", "2025-02-18", "2025-02-19", "2025-02-20", "2025-02-21", "2025-02-24", "2025-02-25", "2025-02-27", "2025-02-28", "2025-03-03", "2025-03-04", "2025-03-05", "2025-03-06", "2025-03-07", "2025-03-10", "2025-03-11", "2025-03-12", "2025-03-13", "2025-03-17", "2025-03-18", "2025-03-19", "2025-03-20", "2025-03-21", "2025-03-24", "2025-03-25", "2025-03-26", "2025-03-27", "2025-03-28", "2025-04-01", "2025-04-02", "2025-04-03", "2025-04-04", "2025-04-07", "2025-04-08", "2025-04-09", "2025-04-11", "2025-04-15", "2025-04-16", "2025-04-17", "2025-04-21", "2025-04-22", "2025-04-23", "2025-04-24", "2025-04-25", "2025-04-28", "2025-04-29", "2025-04-30", "2025-05-02", "2025-05-05", "2025-05-06", "2025-05-07", "2025-05-08", "2025-05-09", "2025-05-12", "2025-05-13", "2025-05-14", "2025-05-15", "2025-05-16", "2025-05-19", "2025-05-20", "2025-05-21", "2025-05-22", "2025-05-23", "2025-05-26", "2025-05-27", "2025-05-28", "2025-05-29", "2025-05-30", "2025-06-02", "2025-06-03", "2025-06-04", "2025-06-05", "2025-06-06", "2025-06-09", "2025-06-10", "2025-06-11", "2025-06-12", "2025-06-13", "2025-06-16", "2025-06-17", "2025-06-18", "2025-06-19", "2025-06-20", "2025-06-23", "2025-06-24", "2025-06-25", "2025-06-26", "2025-06-27", "2025-06-30", "2025-07-01", "2025-07-02", "2025-07-03", "2025-07-04", "2025-07-07", "2025-07-08", "2025-07-09", "2025-07-10", "2025-07-11", "2025-07-14", "2025-07-15", "2025-07-16", "2025-07-17", "2025-07-18", "2025-07-21", "2025-07-22", "2025-07-23", "2025-07-24", "2025-07-25", "2025-07-28", "2025-07-29", "2025-07-30", "2025-07-31", "2025-08-01", "2025-08-04", "2025-08-05", "2025-08-06", "2025-08-07", "2025-08-08", "2025-08-11", "2025-08-12", "2025-08-13", "2025-08-14", "2025-08-18", "2025-08-19", "2025-08-20", "2025-08-21", "2025-08-22", "2025-08-25", "2025-08-26", "2025-08-28", "2025-08-29", "2025-09-01", "2025-09-02", "2025-09-03", "2025-09-04", "2025-09-05", "2025-09-08", "2025-09-09", "2025-09-10", "2025-09-11", "2025-09-12", "2025-09-15", "2025-09-16", "2025-09-17", "2025-09-18", "2025-09-19", "2025-09-22", "2025-09-23", "2025-09-24", "2025-09-25", "2025-09-26", "2025-09-29", "2025-09-30", "2025-10-01", "2025-10-03", "2025-10-06", "2025-10-07", "2025-10-08", "2025-10-09", "2025-10-10", "2025-10-13", "2025-10-14", "2025-10-15", "2025-10-16", "2025-10-17", "2025-10-20", "2025-10-21", "2025-10-23", "2025-10-24", "2025-10-27", "2025-10-28", "2025-10-29", "2025-10-30", "2025-10-31", "2025-11-03", "2025-11-04", "2025-11-06", "2025-11-07", "2025-11-10", "2025-11-11", "2025-11-12", "2025-11-13", "2025-11-14", "2025-11-17", "2025-11-18", "2025-11-19", "2025-11-20", "2025-11-21", "2025-11-24", "2025-11-25", "2025-11-26", "2025-11-27", "2025-11-28", "2025-12-01", "2025-12-02", "2025-12-03", "2025-12-04", "2025-12-05", "2025-12-08", "2025-12-09", "2025-12-10", "2025-12-11", "2025-12-12", "2025-12-15", "2025-12-16", "2025-12-17", "2025-12-18", "2025-12-19", "2025-12-22", "2025-12-23", "2025-12-24", "2025-12-26", "2025-12-29", "2025-12-30", "2025-12-31", "2026-01-01"];
+const strategyEq   = [100000.0, 100000.0, 100000.0, 100000.0, 100000.0, 100000.0, 100000.0, 100000.0, 100000.0, 100000.0, 100000.0, 100000.0, 100000.0, 100000.0, 100000.0, 100000.0, 100000.0, 100000.0, 100000.0, 100000.0, 100000.0, 100000.0, 101273.12, 101756.39, 101307.12, 100609.31, 101368.86, 101814.94, 101699.06, 100433.91, 101319.31, 101865.14, 102940.25, 102502.31, 102495.39, 102113.4, 100997.73, 100946.53, 100642.32, 99336.29, 98805.59, 99918.26, 99368.96, 100128.51, 101169.06, 101691.1, 100872.36, 100144.77, 99034.14, 97767.6, 98072.17, 97867.83, 98592.53, 97921.79, 98042.71, 98483.33, 97880.51, 97072.43, 96858.85, 96646.63, 98029.67, 99837.69, 98915.12, 99697.64, 99669.95, 100467.09, 101544.78, 101341.96, 101247.48, 101612.56, 101211.9, 100972.56, 101199.67, 101032.24, 101788.56, 101795.95, 102789.62, 103104.71, 103649.35, 104549.89, 104230.5, 105137.43, 104311.26, 104977.79, 103871.34, 104001.57, 103725.96, 103852.22, 105315.67, 105101.6, 104642.02, 104079.68, 104374.26, 104520.82, 104543.49, 104698.68, 105933.67, 106516.64, 107165.2, 108016.34, 108540.8, 108516.64, 109645.26, 109792.86, 110369.45, 111166.88, 110572.62, 111155.63, 111844.56, 112558.69, 111791.32, 112419.52, 113783.52, 113867.86, 114478.74, 114919.99, 113005.44, 112383.15, 112966.95, 113887.84, 116390.29, 116889.28, 117488.29, 116954.06, 118557.35, 119719.81, 118650.68, 118180.22, 118874.29, 119410.8, 118163.81, 118429.4, 118635.59, 117902.64, 119024.47, 119494.98, 119009.09, 120275.29, 119692.89, 120566.7, 121080.62, 121926.32, 123452.93, 122597.71, 120694.34, 120970.56, 121468.74, 122827.36, 123806.45, 124480.86, 123625.29, 123734.24, 123805.33, 124355.88, 124991.21, 124454.47, 125105.44, 125392.17, 126345.59, 125788.08, 124455.81, 125283.39, 125395.49, 125749.76, 125233.5, 126379.29, 127880.44, 128522.46, 127662.98, 128567.5, 130834.22, 131793.11, 127876.07, 128448.27, 129844.34, 130650.49, 130876.45, 130724.18, 129336.99, 129854.86, 130587.38, 130556.98, 133254.74, 131453.56, 133289.48, 133799.39, 130359.15, 129913.58, 131156.56, 129585.67, 131855.07, 131880.84, 131993.1, 131780.59, 132464.21, 133016.72, 131272.99, 131063.26, 129415.01, 126904.56, 125938.73, 124314.99, 127436.31, 127480.05, 127484.07, 126488.82, 128344.11, 128593.76, 128919.68, 129048.21, 129699.06, 130311.44, 130982.99, 133713.71, 134694.11, 135381.4, 136133.14, 137537.4, 136549.26, 135876.12, 136464.04, 135508.72, 136679.29, 137611.14, 137981.7, 140233.86, 143236.14, 144086.67, 143797.9, 144100.2, 144219.37, 144891.32, 144846.56, 147977.74, 148621.16, 149148.5, 149129.85, 150169.1, 145774.74, 148563.14, 148883.69, 150566.64, 151058.92, 153634.68, 152913.06, 153261.24, 153798.4, 154022.7, 155689.87, 155264.26, 154391.55, 155150.94, 154500.0, 155424.62, 156780.84, 157885.17, 157806.2, 156050.67, 155382.35, 159214.25, 154979.01, 160253.09, 161183.76, 166316.66, 164929.11, 167049.01, 167807.72, 173305.8, 175456.85, 178089.37, 178586.56, 180970.79, 179086.32, 173205.76, 175933.82, 180699.76, 185148.79, 185298.19, 184312.13, 184752.71, 181266.68, 183249.47, 182497.6, 182533.58, 181128.46, 176177.17, 177381.75, 181020.86, 183673.93, 185082.91, 184727.5, 184229.94, 182294.74, 179956.28, 170929.6, 173946.95, 171178.5, 172311.81, 169421.88, 170334.91, 174403.79, 175833.23, 176765.15, 176381.87, 179594.62, 182086.92, 183334.2, 184011.73, 183448.13, 183036.67, 183269.91, 182712.26, 184054.08, 181451.29, 179840.9, 178380.57, 177871.39, 177819.89, 180332.58, 180191.69, 181392.0, 183181.27, 184607.52, 184941.74, 186532.62, 189622.44, 189408.04, 184552.39, 180329.13, 182433.21, 178606.79, 180228.99, 180106.23, 182373.47, 184975.41, 186396.17, 188903.41, 191927.61, 191623.43, 193421.23, 194187.23, 195499.58, 194127.79, 193585.29, 190981.21, 191585.38, 203004.31, 178205.25, 187709.45, 191385.2, 195470.53, 196517.13, 197312.93, 198763.03, 200606.41, 202323.93, 203306.71, 200099.1, 199324.79, 199236.4, 200169.31, 199746.34, 199002.89, 200460.17, 200827.15, 202810.9, 201262.76, 203749.21, 203814.41, 203839.9, 204437.31, 204753.27, 203219.81, 202937.33, 204155.83, 205449.48, 205143.5, 205219.15, 200900.6, 202832.51, 201090.92, 200937.27, 199897.8, 203698.07, 204841.61, 205144.69, 205760.25, 205089.07, 201780.77, 195402.65, 192033.02, 198187.33, 196900.55, 199516.91, 198691.98, 196054.54, 195353.05, 198727.31, 199584.01, 202205.81, 202940.06, 202163.59, 201832.09, 203019.11, 204606.59, 204935.65, 205853.38, 206739.65, 205415.36, 205053.16, 204652.12, 204567.81, 201364.34, 201016.47, 203104.38, 202792.45, 207045.78, 206709.81, 209021.48, 209097.43, 206891.99, 206321.71, 208210.5, 209102.84, 211020.94, 210949.23, 211328.89, 213482.21, 211887.2, 214204.62, 210196.67, 207339.66, 203997.16, 209618.08, 210644.12, 209862.41, 210820.54, 210779.17, 211121.83, 209695.54, 204081.11, 205935.67, 203617.24, 198535.6, 201508.22, 200415.71, 195735.35, 197792.09, 198833.16, 198032.92, 196502.39, 197721.84, 196641.02, 197562.18, 202215.44, 200675.34, 201187.85, 201020.37, 198446.86, 195266.3, 195235.41, 195008.95, 196972.98, 197200.08, 201784.67, 204676.92, 204011.22, 204686.94, 202870.65, 204638.48, 206257.3, 207412.07, 208907.31, 210455.33, 210799.19, 210858.36, 211610.92, 211469.82, 212035.25, 214333.16, 215335.19, 213979.24, 212292.61, 211140.65, 206159.32, 207731.95, 207199.52, 208409.54, 208687.31, 209510.2, 208780.04, 209098.45, 212060.23, 210060.58, 207959.71, 207609.62, 204327.85, 202779.79, 201562.23, 195219.23, 195617.22, 196078.75, 196058.5, 195452.41, 196637.65, 191336.47, 192007.62, 196154.72, 194040.7, 189311.24, 188249.52, 191839.29, 191365.43, 193213.34, 192663.48, 193851.98, 195018.9, 194657.69, 193339.72, 193133.9, 192186.68, 188723.55, 188401.81, 188788.89, 187177.56, 186903.62, 186808.78, 186954.23, 187272.72, 185558.03, 184469.59, 184937.65, 185156.22, 180735.31, 181624.27, 181785.92, 184100.41, 186468.86, 186806.04, 186211.18, 186652.79, 187447.42, 186503.52, 189573.13, 189573.13, 193789.88, 194753.1, 196403.14, 198555.53, 198650.9, 197277.58, 198671.35, 199062.64, 195249.18, 196620.2, 196323.93, 194029.38, 187502.27, 191819.91, 190353.36, 194709.3, 198957.35, 199317.16, 202541.6, 205999.61, 205919.3, 206482.34, 206401.45, 202941.85, 205353.24, 204545.94, 203012.2, 202019.93, 203497.31, 202238.8, 203722.77, 200906.71, 198729.01, 204850.63, 202243.06, 202368.36, 205126.11, 204967.96, 204625.88, 201785.81, 201836.95, 199872.89, 201901.54, 203136.06, 202093.72, 201427.66, 201503.07, 200153.88, 200541.43, 199497.66, 200671.69, 201513.5, 202832.52, 204993.36, 204054.73, 204139.44, 200693.21, 198763.36, 200180.19, 199086.03, 198658.33, 196836.15, 199703.92, 199865.88, 202186.17, 203142.84, 205460.79, 207766.69, 209312.51, 208528.91, 207787.48, 206552.27, 207546.69, 208248.97, 209170.21, 208489.13, 206552.03, 204404.41, 204843.1, 205561.03, 206604.69, 205279.47, 204222.8, 204568.17, 203405.1, 204419.93, 202784.62, 200471.67, 198805.62, 199538.17, 199212.39, 198233.42, 195215.07, 195641.78, 195296.78, 194440.71, 194741.68, 192235.82, 195011.35, 194337.54, 195032.38, 195600.84, 198936.4, 199501.64, 200575.39, 200072.8, 199354.01, 199622.15, 197160.11, 194167.54, 193509.61, 196043.93, 196058.29, 197638.14, 198279.33, 198811.8, 199948.81, 201052.36, 200427.23, 200025.72, 200544.2, 199985.58, 201907.12, 201608.74, 202596.66, 201374.5, 201219.29, 199809.07, 199137.72, 198172.59, 195756.62, 195063.94, 195965.05, 196670.4, 197987.31, 199564.03, 199308.28, 198387.29, 199414.79, 199946.42, 200551.12, 198599.67, 201243.14, 202060.58, 201941.56, 203716.45, 203787.58, 203216.63, 203340.06, 205901.14, 207134.47, 207367.01, 207543.38, 208006.89, 208860.02, 208660.46, 207254.06, 208166.24, 208591.45, 207963.69, 208796.12, 208357.69, 208987.12, 210666.96, 210025.97, 210692.56, 210490.33, 208262.89, 207335.76, 208663.25, 211166.08, 211255.44, 211568.68, 212143.07, 212243.59, 209147.16, 209477.86, 211540.64, 207786.74, 207835.9, 206707.44, 207139.38, 208639.08, 209201.95, 207463.1, 207832.56, 207641.29, 209373.35, 210314.72, 209796.06, 208855.21, 208155.18, 207184.45, 209260.69, 210984.95, 211731.72];
+const benchmarkEq  = [100000.0, 100192.89, 99150.98, 98871.83, 98142.6, 99471.08, 98443.19, 98341.8, 98135.73, 98676.47, 98337.13, 99207.86, 99823.6, 99507.63, 99066.91, 99566.43, 99565.06, 98321.19, 96740.75, 96985.84, 97058.39, 96806.43, 96774.0, 98112.93, 97621.37, 97384.53, 98209.91, 98329.44, 98126.39, 97656.0, 98529.47, 99002.06, 99111.97, 98608.32, 98060.99, 97962.63, 96465.72, 96229.15, 95979.39, 95577.68, 95089.97, 95897.51, 95188.62, 96685.8, 97329.3, 97565.32, 96659.7, 95688.69, 94267.61, 93657.64, 93266.65, 93340.55, 93969.49, 93355.94, 94010.43, 94254.42, 93842.28, 93117.73, 93341.1, 93154.26, 93863.15, 95396.61, 95607.09, 96480.83, 96712.18, 96849.02, 97388.93, 97884.05, 97969.77, 97304.02, 97047.39, 96819.89, 96851.21, 96849.02, 97504.88, 97646.93, 97890.64, 98448.14, 99272.16, 99726.34, 99408.71, 100320.66, 99294.14, 100367.92, 100376.43, 100646.52, 100547.06, 100644.88, 101106.75, 100489.36, 99913.73, 99629.07, 100032.7, 100642.68, 100827.32, 100483.32, 100679.77, 101659.03, 102204.71, 102398.14, 101851.64, 101595.28, 101849.99, 102178.33, 102206.63, 102906.73, 102401.99, 102011.0, 102220.37, 102850.41, 103068.84, 102696.26, 103454.06, 103066.36, 103402.95, 103623.59, 103153.19, 102572.07, 102713.29, 103406.8, 104256.92, 105449.12, 106182.74, 106547.9, 106600.11, 107143.04, 106233.57, 106366.01, 106824.86, 106522.08, 106683.91, 107512.32, 108319.85, 108527.57, 108988.63, 109790.94, 108504.22, 108104.98, 108150.32, 108687.22, 108036.57, 107960.46, 108552.58, 108441.3, 107303.78, 106507.51, 107251.3, 107692.57, 107547.21, 107886.28, 107394.72, 106763.87, 106798.21, 106965.54, 106417.39, 106114.6, 106573.18, 106588.84, 106850.14, 106535.26, 105870.89, 106092.07, 106293.2, 106319.57, 105804.94, 106802.34, 107316.14, 107569.47, 107768.13, 108405.58, 108916.08, 109885.45, 109868.14, 110290.18, 110472.07, 110962.53, 110638.04, 109363.68, 108489.65, 108115.43, 108117.08, 108062.94, 108347.32, 107287.29, 107917.88, 107315.86, 106806.73, 107409.28, 108001.4, 107225.74, 108201.15, 108868.83, 108773.49, 108537.47, 108431.41, 108869.65, 108098.12, 107843.13, 107392.25, 105958.53, 105081.49, 103625.79, 104669.89, 105184.52, 104847.66, 104350.62, 105142.48, 105677.45, 106672.92, 106645.16, 106847.39, 106582.52, 106747.65, 106847.67, 108122.02, 108615.22, 108431.68, 108223.96, 108715.24, 108871.58, 108817.45, 108777.33, 109299.38, 110436.35, 110637.21, 111377.7, 113679.67, 114604.52, 115058.43, 114857.58, 115232.64, 115384.85, 114886.43, 114996.06, 116404.77, 117910.21, 117701.39, 117890.7, 116225.91, 116802.36, 117320.84, 117826.13, 118998.82, 119679.96, 119420.04, 119477.74, 119059.55, 118243.77, 119019.98, 119306.84, 118219.87, 118394.89, 118800.71, 118957.33, 120316.59, 121431.58, 121073.57, 118543.81, 117940.98, 118821.05, 116713.07, 117895.37, 117338.42, 119454.1, 118269.87, 119388.71, 119233.46, 120092.66, 119641.49, 120508.1, 120514.14, 119346.12, 119700.84, 118786.16, 119485.15, 120017.1, 120405.61, 121119.72, 121567.86, 121978.36, 121198.58, 122091.01, 122064.91, 121566.77, 121986.05, 120627.62, 120801.55, 122757.59, 123124.95, 122854.04, 123501.1, 123608.26, 122724.07, 122740.82, 120883.42, 121701.95, 121024.38, 121202.15, 119892.9, 120011.87, 120961.73, 121427.73, 120921.89, 121575.56, 122692.47, 123434.88, 123387.08, 123284.59, 123724.21, 123718.98, 124557.57, 124428.15, 125038.41, 123750.31, 122393.53, 121708.82, 120873.26, 121703.87, 122744.68, 122918.33, 123107.37, 124030.29, 123203.8, 124431.73, 124219.88, 124458.1, 123510.99, 123328.82, 122558.39, 122558.39, 120662.52, 121199.4, 121467.85, 122093.21, 121998.15, 123115.33, 123457.41, 123803.34, 124181.14, 126213.57, 126155.59, 126020.13, 125776.7, 124768.58, 123581.33, 123812.4, 127841.55, 120261.36, 124305.06, 125409.89, 127985.8, 127815.71, 127846.76, 128166.04, 128583.41, 128949.94, 129457.16, 129226.9, 129507.16, 129145.02, 129346.97, 130355.09, 131165.64, 132131.16, 131944.86, 132666.67, 132567.2, 133461.01, 133547.02, 133666.26, 133648.13, 134267.17, 133669.55, 133622.84, 134646.07, 135110.69, 135255.22, 136287.51, 134804.06, 134685.09, 134519.13, 134158.91, 134118.25, 136474.34, 136481.21, 136597.72, 137113.45, 137441.79, 135830.57, 132192.15, 131845.68, 133521.46, 132529.56, 133906.13, 133793.48, 132650.46, 132676.56, 134860.39, 135033.49, 135726.99, 136119.07, 136346.03, 136410.05, 137440.14, 137479.43, 137669.57, 138216.89, 138678.23, 138913.42, 138919.74, 138473.8, 138179.25, 136569.42, 137032.39, 137607.75, 136933.75, 139519.01, 139340.96, 139490.7, 139681.94, 139456.64, 139666.83, 141728.38, 142542.23, 142549.65, 142899.98, 144064.43, 143860.54, 141837.73, 141761.08, 138756.26, 137462.12, 136259.48, 137454.16, 137282.7, 137373.37, 137185.44, 138085.01, 137697.04, 137224.18, 136007.25, 136579.86, 136178.97, 134480.93, 134279.81, 134081.43, 132880.17, 133750.34, 134452.08, 133759.68, 133015.07, 133559.1, 131861.06, 133058.76, 134546.61, 132982.1, 132701.01, 132663.1, 131246.14, 129463.48, 129318.67, 128885.1, 129240.64, 128314.14, 131376.93, 133106.02, 132955.45, 133397.27, 131414.85, 132607.04, 133403.59, 134398.78, 134455.38, 135779.47, 135611.32, 135288.19, 135239.01, 135413.49, 134901.87, 136108.64, 135558.83, 133733.03, 132979.35, 131621.19, 129619.81, 130531.75, 130389.98, 130513.89, 130861.2, 129935.25, 129934.7, 130473.78, 132923.3, 131912.72, 129776.71, 130281.45, 130177.31, 129284.6, 128762.55, 126863.66, 127358.79, 127562.93, 128104.77, 127507.98, 128285.84, 126526.8, 127245.03, 127519.79, 126898.0, 125452.47, 126156.42, 127287.62, 127762.41, 129185.14, 129040.89, 128375.41, 130453.72, 130217.71, 129706.91, 129468.42, 128488.34, 126785.91, 126640.0, 126563.89, 126002.55, 126168.78, 126090.75, 126022.61, 125914.08, 125269.76, 123936.87, 123905.01, 123891.27, 121581.32, 121551.66, 121350.25, 122749.63, 123889.34, 123932.2, 123425.54, 123632.16, 123481.59, 123078.78, 123691.79, 125480.78, 125883.57, 127439.02, 128316.89, 130009.15, 130065.76, 129066.71, 129644.26, 129245.31, 127301.9, 128217.69, 127765.71, 125866.26, 121784.1, 123840.71, 123089.51, 125449.18, 128196.82, 128793.87, 131071.39, 132576.55, 132805.7, 133694.28, 133242.3, 132102.85, 133691.81, 133732.75, 133723.13, 133791.82, 134420.76, 133972.62, 134163.86, 133391.23, 131930.58, 136968.09, 135064.81, 135551.42, 137723.15, 137490.7, 137082.12, 135644.84, 136356.74, 135237.08, 136574.91, 137388.21, 136426.81, 136021.53, 136467.48, 136011.92, 135824.53, 134867.8, 135294.78, 136013.02, 137398.66, 137949.0, 137954.77, 138158.93, 136767.52, 135835.52, 137087.89, 136576.29, 136349.06, 136245.74, 137999.56, 137227.48, 137625.61, 138726.86, 140398.8, 140886.78, 140223.23, 140359.24, 139873.45, 139609.13, 139915.21, 139916.87, 140253.17, 139998.19, 139334.09, 138205.36, 137834.16, 138457.87, 138547.17, 137994.34, 137208.24, 137880.31, 137716.56, 138590.31, 137723.15, 136486.16, 135628.35, 136398.78, 136585.36, 136108.91, 134993.37, 135858.33, 135456.08, 135042.0, 135162.63, 133883.05, 135101.63, 134565.02, 135290.11, 135355.79, 136705.69, 137275.56, 137659.68, 137842.12, 136668.05, 137204.67, 135799.53, 134639.2, 134232.27, 135321.44, 135071.68, 135816.02, 135921.8, 135958.62, 136135.29, 136659.81, 137234.07, 137412.12, 138008.35, 137762.16, 138695.81, 139196.71, 139709.69, 139179.13, 138493.86, 138313.34, 137694.58, 136782.08, 135484.37, 135375.57, 135244.78, 136482.32, 136800.77, 137808.6, 137977.03, 137635.5, 138380.94, 138949.97, 138631.24, 138181.45, 139159.89, 140598.28, 141282.71, 142015.24, 142155.09, 142280.38, 141751.46, 142690.61, 142526.56, 143173.36, 142205.92, 141350.03, 141576.71, 140666.15, 140182.83, 140087.22, 140538.1, 141200.83, 142194.66, 142213.07, 142382.87, 142951.07, 142382.87, 143166.5, 143933.09, 143251.67, 142654.61, 142244.12, 144005.35, 144061.68, 143992.43, 143842.96, 143054.11, 142800.23, 143062.63, 143901.76, 142660.38, 141996.0, 141547.31, 142319.68, 143135.17, 143027.19, 142108.38, 141880.05, 141863.57, 142692.53, 143824.56, 143850.66, 143658.04, 143109.62, 142558.99, 142541.13, 143589.35, 143682.5];
+const ddDates      = ["2023-01-02", "2023-01-03", "2023-01-04", "2023-01-05", "2023-01-06", "2023-01-09", "2023-01-10", "2023-01-11", "2023-01-12", "2023-01-13", "2023-01-16", "2023-01-17", "2023-01-18", "2023-01-19", "2023-01-20", "2023-01-23", "2023-01-24", "2023-01-25", "2023-01-27", "2023-01-30", "2023-01-31", "2023-02-01", "2023-02-02", "2023-02-03", "2023-02-06", "2023-02-07", "2023-02-08", "2023-02-09", "2023-02-10", "2023-02-13", "2023-02-14", "2023-02-15", "2023-02-16", "2023-02-17", "2023-02-20", "2023-02-21", "2023-02-22", "2023-02-23", "2023-02-24", "2023-02-27", "2023-02-28", "2023-03-01", "2023-03-02", "2023-03-03", "2023-03-06", "2023-03-08", "2023-03-09", "2023-03-10", "2023-03-13", "2023-03-14", "2023-03-15", "2023-03-16", "2023-03-17", "2023-03-20", "2023-03-21", "2023-03-22", "2023-03-23", "2023-03-24", "2023-03-27", "2023-03-28", "2023-03-29", "2023-03-31", "2023-04-03", "2023-04-05", "2023-04-06", "2023-04-10", "2023-04-11", "2023-04-12", "2023-04-13", "2023-04-17", "2023-04-18", "2023-04-19", "2023-04-20", "2023-04-21", "2023-04-24", "2023-04-25", "2023-04-26", "2023-04-27", "2023-04-28", "2023-05-02", "2023-05-03", "2023-05-04", "2023-05-05", "2023-05-08", "2023-05-09", "2023-05-10", "2023-05-11", "2023-05-12", "2023-05-15", "2023-05-16", "2023-05-17", "2023-05-18", "2023-05-19", "2023-05-22", "2023-05-23", "2023-05-24", "2023-05-25", "2023-05-26", "2023-05-29", "2023-05-30", "2023-05-31", "2023-06-01", "2023-06-02", "2023-06-05", "2023-06-06", "2023-06-07", "2023-06-08", "2023-06-09", "2023-06-12", "2023-06-13", "2023-06-14", "2023-06-15", "2023-06-16", "2023-06-19", "2023-06-20", "2023-06-21", "2023-06-22", "2023-06-23", "2023-06-26", "2023-06-27", "2023-06-28", "2023-06-30", "2023-07-03", "2023-07-04", "2023-07-05", "2023-07-06", "2023-07-07", "2023-07-10", "2023-07-11", "2023-07-12", "2023-07-13", "2023-07-14", "2023-07-17", "2023-07-18", "2023-07-19", "2023-07-20", "2023-07-21", "2023-07-24", "2023-07-25", "2023-07-26", "2023-07-27", "2023-07-28", "2023-07-31", "2023-08-01", "2023-08-02", "2023-08-03", "2023-08-04", "2023-08-07", "2023-08-08", "2023-08-09", "2023-08-10", "2023-08-11", "2023-08-14", "2023-08-16", "2023-08-17", "2023-08-18", "2023-08-21", "2023-08-22", "2023-08-23", "2023-08-24", "2023-08-25", "2023-08-28", "2023-08-29", "2023-08-30", "2023-08-31", "2023-09-01", "2023-09-04", "2023-09-05", "2023-09-06", "2023-09-07", "2023-09-08", "2023-09-11", "2023-09-12", "2023-09-13", "2023-09-14", "2023-09-15", "2023-09-18", "2023-09-20", "2023-09-21", "2023-09-22", "2023-09-25", "2023-09-26", "2023-09-27", "2023-09-28", "2023-09-29", "2023-10-03", "2023-10-04", "2023-10-05", "2023-10-06", "2023-10-09", "2023-10-10", "2023-10-11", "2023-10-12", "2023-10-13", "2023-10-16", "2023-10-17", "2023-10-18", "2023-10-19", "2023-10-20", "2023-10-23", "2023-10-25", "2023-10-26", "2023-10-27", "2023-10-30", "2023-10-31", "2023-11-01", "2023-11-02", "2023-11-03", "2023-11-06", "2023-11-07", "2023-11-08", "2023-11-09", "2023-11-10", "2023-11-13", "2023-11-15", "2023-11-16", "2023-11-17", "2023-11-20", "2023-11-21", "2023-11-22", "2023-11-23", "2023-11-24", "2023-11-28", "2023-11-29", "2023-11-30", "2023-12-01", "2023-12-04", "2023-12-05", "2023-12-06", "2023-12-07", "2023-12-08", "2023-12-11", "2023-12-12", "2023-12-13", "2023-12-14", "2023-12-15", "2023-12-18", "2023-12-19", "2023-12-20", "2023-12-21", "2023-12-22", "2023-12-26", "2023-12-27", "2023-12-28", "2023-12-29", "2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-08", "2024-01-09", "2024-01-10", "2024-01-11", "2024-01-12", "2024-01-15", "2024-01-16", "2024-01-17", "2024-01-18", "2024-01-19", "2024-01-23", "2024-01-24", "2024-01-25", "2024-01-29", "2024-01-30", "2024-01-31", "2024-02-01", "2024-02-02", "2024-02-05", "2024-02-06", "2024-02-07", "2024-02-08", "2024-02-09", "2024-02-12", "2024-02-13", "2024-02-14", "2024-02-15", "2024-02-16", "2024-02-19", "2024-02-20", "2024-02-21", "2024-02-22", "2024-02-23", "2024-02-26", "2024-02-27", "2024-02-28", "2024-02-29", "2024-03-01", "2024-03-04", "2024-03-05", "2024-03-06", "2024-03-07", "2024-03-11", "2024-03-12", "2024-03-13", "2024-03-14", "2024-03-15", "2024-03-18", "2024-03-19", "2024-03-20", "2024-03-21", "2024-03-22", "2024-03-26", "2024-03-27", "2024-03-28", "2024-04-01", "2024-04-02", "2024-04-03", "2024-04-04", "2024-04-05", "2024-04-08", "2024-04-09", "2024-04-10", "2024-04-12", "2024-04-15", "2024-04-16", "2024-04-18", "2024-04-19", "2024-04-22", "2024-04-23", "2024-04-24", "2024-04-25", "2024-04-26", "2024-04-29", "2024-04-30", "2024-05-02", "2024-05-03", "2024-05-06", "2024-05-07", "2024-05-08", "2024-05-09", "2024-05-10", "2024-05-13", "2024-05-14", "2024-05-15", "2024-05-16", "2024-05-17", "2024-05-21", "2024-05-22", "2024-05-23", "2024-05-24", "2024-05-27", "2024-05-28", "2024-05-29", "2024-05-30", "2024-05-31", "2024-06-03", "2024-06-04", "2024-06-05", "2024-06-06", "2024-06-07", "2024-06-10", "2024-06-11", "2024-06-12", "2024-06-13", "2024-06-14", "2024-06-18", "2024-06-19", "2024-06-20", "2024-06-21", "2024-06-24", "2024-06-25", "2024-06-26", "2024-06-27", "2024-06-28", "2024-07-01", "2024-07-02", "2024-07-03", "2024-07-04", "2024-07-05", "2024-07-08", "2024-07-09", "2024-07-10", "2024-07-11", "2024-07-12", "2024-07-15", "2024-07-16", "2024-07-18", "2024-07-19", "2024-07-22", "2024-07-23", "2024-07-24", "2024-07-25", "2024-07-26", "2024-07-29", "2024-07-30", "2024-07-31", "2024-08-01", "2024-08-02", "2024-08-05", "2024-08-06", "2024-08-07", "2024-08-08", "2024-08-09", "2024-08-12", "2024-08-13", "2024-08-14", "2024-08-16", "2024-08-19", "2024-08-20", "2024-08-21", "2024-08-22", "2024-08-23", "2024-08-26", "2024-08-27", "2024-08-28", "2024-08-29", "2024-08-30", "2024-09-02", "2024-09-03", "2024-09-04", "2024-09-05", "2024-09-06", "2024-09-09", "2024-09-10", "2024-09-11", "2024-09-12", "2024-09-13", "2024-09-16", "2024-09-17", "2024-09-18", "2024-09-19", "2024-09-20", "2024-09-23", "2024-09-24", "2024-09-25", "2024-09-26", "2024-09-27", "2024-09-30", "2024-10-01", "2024-10-03", "2024-10-04", "2024-10-07", "2024-10-08", "2024-10-09", "2024-10-10", "2024-10-11", "2024-10-14", "2024-10-15", "2024-10-16", "2024-10-17", "2024-10-18", "2024-10-21", "2024-10-22", "2024-10-23", "2024-10-24", "2024-10-25", "2024-10-28", "2024-10-29", "2024-10-30", "2024-10-31", "2024-11-01", "2024-11-04", "2024-11-05", "2024-11-06", "2024-11-07", "2024-11-08", "2024-11-11", "2024-11-12", "2024-11-13", "2024-11-14", "2024-11-18", "2024-11-19", "2024-11-21", "2024-11-22", "2024-11-25", "2024-11-26", "2024-11-27", "2024-11-28", "2024-11-29", "2024-12-02", "2024-12-03", "2024-12-04", "2024-12-05", "2024-12-06", "2024-12-09", "2024-12-10", "2024-12-11", "2024-12-12", "2024-12-13", "2024-12-16", "2024-12-17", "2024-12-18", "2024-12-19", "2024-12-20", "2024-12-23", "2024-12-24", "2024-12-26", "2024-12-27", "2024-12-30", "2024-12-31", "2025-01-01", "2025-01-02", "2025-01-03", "2025-01-06", "2025-01-07", "2025-01-08", "2025-01-09", "2025-01-10", "2025-01-13", "2025-01-14", "2025-01-15", "2025-01-16", "2025-01-17", "2025-01-20", "2025-01-21", "2025-01-22", "2025-01-23", "2025-01-24", "2025-01-27", "2025-01-28", "2025-01-29", "2025-01-30", "2025-01-31", "2025-02-01", "2025-02-03", "2025-02-04", "2025-02-05", "2025-02-06", "2025-02-07", "2025-02-10", "2025-02-11", "2025-02-12", "2025-02-13", "2025-02-14", "2025-02-17", "2025-02-18", "2025-02-19", "2025-02-20", "2025-02-21", "2025-02-24", "2025-02-25", "2025-02-27", "2025-02-28", "2025-03-03", "2025-03-04", "2025-03-05", "2025-03-06", "2025-03-07", "2025-03-10", "2025-03-11", "2025-03-12", "2025-03-13", "2025-03-17", "2025-03-18", "2025-03-19", "2025-03-20", "2025-03-21", "2025-03-24", "2025-03-25", "2025-03-26", "2025-03-27", "2025-03-28", "2025-04-01", "2025-04-02", "2025-04-03", "2025-04-04", "2025-04-07", "2025-04-08", "2025-04-09", "2025-04-11", "2025-04-15", "2025-04-16", "2025-04-17", "2025-04-21", "2025-04-22", "2025-04-23", "2025-04-24", "2025-04-25", "2025-04-28", "2025-04-29", "2025-04-30", "2025-05-02", "2025-05-05", "2025-05-06", "2025-05-07", "2025-05-08", "2025-05-09", "2025-05-12", "2025-05-13", "2025-05-14", "2025-05-15", "2025-05-16", "2025-05-19", "2025-05-20", "2025-05-21", "2025-05-22", "2025-05-23", "2025-05-26", "2025-05-27", "2025-05-28", "2025-05-29", "2025-05-30", "2025-06-02", "2025-06-03", "2025-06-04", "2025-06-05", "2025-06-06", "2025-06-09", "2025-06-10", "2025-06-11", "2025-06-12", "2025-06-13", "2025-06-16", "2025-06-17", "2025-06-18", "2025-06-19", "2025-06-20", "2025-06-23", "2025-06-24", "2025-06-25", "2025-06-26", "2025-06-27", "2025-06-30", "2025-07-01", "2025-07-02", "2025-07-03", "2025-07-04", "2025-07-07", "2025-07-08", "2025-07-09", "2025-07-10", "2025-07-11", "2025-07-14", "2025-07-15", "2025-07-16", "2025-07-17", "2025-07-18", "2025-07-21", "2025-07-22", "2025-07-23", "2025-07-24", "2025-07-25", "2025-07-28", "2025-07-29", "2025-07-30", "2025-07-31", "2025-08-01", "2025-08-04", "2025-08-05", "2025-08-06", "2025-08-07", "2025-08-08", "2025-08-11", "2025-08-12", "2025-08-13", "2025-08-14", "2025-08-18", "2025-08-19", "2025-08-20", "2025-08-21", "2025-08-22", "2025-08-25", "2025-08-26", "2025-08-28", "2025-08-29", "2025-09-01", "2025-09-02", "2025-09-03", "2025-09-04", "2025-09-05", "2025-09-08", "2025-09-09", "2025-09-10", "2025-09-11", "2025-09-12", "2025-09-15", "2025-09-16", "2025-09-17", "2025-09-18", "2025-09-19", "2025-09-22", "2025-09-23", "2025-09-24", "2025-09-25", "2025-09-26", "2025-09-29", "2025-09-30", "2025-10-01", "2025-10-03", "2025-10-06", "2025-10-07", "2025-10-08", "2025-10-09", "2025-10-10", "2025-10-13", "2025-10-14", "2025-10-15", "2025-10-16", "2025-10-17", "2025-10-20", "2025-10-21", "2025-10-23", "2025-10-24", "2025-10-27", "2025-10-28", "2025-10-29", "2025-10-30", "2025-10-31", "2025-11-03", "2025-11-04", "2025-11-06", "2025-11-07", "2025-11-10", "2025-11-11", "2025-11-12", "2025-11-13", "2025-11-14", "2025-11-17", "2025-11-18", "2025-11-19", "2025-11-20", "2025-11-21", "2025-11-24", "2025-11-25", "2025-11-26", "2025-11-27", "2025-11-28", "2025-12-01", "2025-12-02", "2025-12-03", "2025-12-04", "2025-12-05", "2025-12-08", "2025-12-09", "2025-12-10", "2025-12-11", "2025-12-12", "2025-12-15", "2025-12-16", "2025-12-17", "2025-12-18", "2025-12-19", "2025-12-22", "2025-12-23", "2025-12-24", "2025-12-26", "2025-12-29", "2025-12-30", "2025-12-31", "2026-01-01"];
+const strategyDD   = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.44, -1.13, -0.38, 0.0, -0.11, -1.36, -0.49, 0.0, 0.0, -0.43, -0.43, -0.8, -1.89, -1.94, -2.23, -3.5, -4.02, -2.94, -3.47, -2.73, -1.72, -1.21, -2.01, -2.72, -3.79, -5.02, -4.73, -4.93, -4.22, -4.88, -4.76, -4.33, -4.92, -5.7, -5.91, -6.11, -4.77, -3.01, -3.91, -3.15, -3.18, -2.4, -1.36, -1.55, -1.64, -1.29, -1.68, -1.91, -1.69, -1.85, -1.12, -1.11, -0.15, 0.0, 0.0, 0.0, -0.31, 0.0, -0.79, -0.15, -1.2, -1.08, -1.34, -1.22, 0.0, -0.2, -0.64, -1.17, -0.89, -0.75, -0.73, -0.59, 0.0, 0.0, 0.0, 0.0, 0.0, -0.02, 0.0, 0.0, 0.0, 0.0, -0.53, -0.01, 0.0, 0.0, -0.68, -0.12, 0.0, 0.0, 0.0, 0.0, -1.67, -2.21, -1.7, -0.9, 0.0, 0.0, 0.0, -0.45, 0.0, 0.0, -0.89, -1.29, -0.71, -0.26, -1.3, -1.08, -0.91, -1.52, -0.58, -0.19, -0.59, 0.0, -0.48, 0.0, 0.0, 0.0, 0.0, -0.69, -2.23, -2.01, -1.61, -0.51, 0.0, 0.0, -0.69, -0.6, -0.54, -0.1, 0.0, -0.43, 0.0, 0.0, 0.0, -0.44, -1.5, -0.84, -0.75, -0.47, -0.88, 0.0, 0.0, 0.0, -0.67, 0.0, 0.0, 0.0, -2.97, -2.54, -1.48, -0.87, -0.7, -0.81, -1.86, -1.47, -0.91, -0.94, 0.0, -1.35, 0.0, 0.0, -2.57, -2.9, -1.98, -3.15, -1.45, -1.43, -1.35, -1.51, -1.0, -0.58, -1.89, -2.04, -3.28, -5.15, -5.87, -7.09, -4.76, -4.72, -4.72, -5.46, -4.08, -3.89, -3.65, -3.55, -3.06, -2.61, -2.1, -0.06, 0.0, 0.0, 0.0, 0.0, -0.72, -1.21, -0.78, -1.48, -0.62, 0.0, 0.0, 0.0, 0.0, 0.0, -0.2, 0.0, 0.0, 0.0, -0.03, 0.0, 0.0, 0.0, -0.01, 0.0, -2.93, -1.07, -0.86, 0.0, 0.0, 0.0, -0.47, -0.24, 0.0, 0.0, 0.0, -0.27, -0.83, -0.35, -0.76, -0.17, 0.0, 0.0, -0.05, -1.16, -1.59, 0.0, -2.66, 0.0, 0.0, 0.0, -0.83, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -1.04, -4.29, -2.78, -0.15, 0.0, 0.0, -0.53, -0.29, -2.18, -1.11, -1.51, -1.49, -2.25, -4.92, -4.27, -2.31, -0.88, -0.12, -0.31, -0.58, -1.62, -2.88, -7.75, -6.13, -7.62, -7.01, -8.57, -8.08, -5.88, -5.11, -4.61, -4.81, -3.08, -1.73, -1.06, -0.69, -1.0, -1.22, -1.09, -1.4, -0.67, -2.08, -2.95, -3.73, -4.01, -4.04, -2.68, -2.76, -2.11, -1.14, -0.37, -0.19, 0.0, 0.0, -0.11, -2.67, -4.9, -3.79, -5.81, -4.95, -5.02, -3.82, -2.45, -1.7, -0.38, 0.0, -0.16, 0.0, 0.0, 0.0, -0.7, -0.98, -2.31, -2.0, 0.0, -12.22, -7.53, -5.72, -3.71, -3.2, -2.8, -2.09, -1.18, -0.34, 0.0, -1.58, -1.96, -2.0, -1.54, -1.75, -2.12, -1.4, -1.22, -0.24, -1.01, 0.0, 0.0, 0.0, 0.0, 0.0, -0.75, -0.89, -0.29, 0.0, -0.15, -0.11, -2.21, -1.27, -2.12, -2.2, -2.7, -0.85, -0.3, -0.15, 0.0, -0.33, -1.93, -5.03, -6.67, -3.68, -4.31, -3.03, -3.44, -4.72, -5.06, -3.42, -3.0, -1.73, -1.37, -1.75, -1.91, -1.33, -0.56, -0.4, 0.0, 0.0, -0.64, -0.82, -1.01, -1.05, -2.6, -2.77, -1.76, -1.91, 0.0, -0.16, 0.0, 0.0, -1.05, -1.33, -0.42, 0.0, 0.0, -0.03, 0.0, 0.0, -0.75, 0.0, -1.87, -3.2, -4.77, -2.14, -1.66, -2.03, -1.58, -1.6, -1.44, -2.11, -4.73, -3.86, -4.94, -7.31, -5.93, -6.44, -8.62, -7.66, -7.18, -7.55, -8.26, -7.69, -8.2, -7.77, -5.6, -6.32, -6.08, -6.15, -7.36, -8.84, -8.86, -8.96, -8.04, -7.94, -5.8, -4.45, -4.76, -4.44, -5.29, -4.47, -3.71, -3.17, -2.47, -1.75, -1.59, -1.56, -1.21, -1.28, -1.01, 0.0, 0.0, -0.63, -1.41, -1.95, -4.26, -3.53, -3.78, -3.22, -3.09, -2.71, -3.04, -2.9, -1.52, -2.45, -3.43, -3.59, -5.11, -5.83, -6.4, -9.34, -9.16, -8.94, -8.95, -9.23, -8.68, -11.14, -10.83, -8.91, -9.89, -12.09, -12.58, -10.91, -11.13, -10.27, -10.53, -9.98, -9.43, -9.6, -10.21, -10.31, -10.75, -12.36, -12.51, -12.33, -13.08, -13.2, -13.25, -13.18, -13.03, -13.83, -14.33, -14.12, -14.01, -16.07, -15.66, -15.58, -14.51, -13.41, -13.25, -13.52, -13.32, -12.95, -13.39, -11.96, -11.96, -10.01, -9.56, -8.79, -7.79, -7.75, -8.39, -7.74, -7.56, -9.33, -8.69, -8.83, -9.89, -12.93, -10.92, -11.6, -9.58, -7.61, -7.44, -5.94, -4.34, -4.37, -4.11, -4.15, -5.76, -4.64, -5.01, -5.72, -6.18, -5.5, -6.08, -5.39, -6.7, -7.71, -4.87, -6.08, -6.02, -4.74, -4.81, -4.97, -6.29, -6.27, -7.18, -6.24, -5.67, -6.15, -6.46, -6.42, -7.05, -6.87, -7.35, -6.81, -6.42, -5.81, -4.8, -5.24, -5.2, -6.8, -7.7, -7.04, -7.55, -7.74, -8.59, -7.26, -7.18, -6.11, -5.66, -4.59, -3.51, -2.8, -3.16, -3.51, -4.08, -3.62, -3.29, -2.86, -3.18, -4.08, -5.08, -4.87, -4.54, -4.05, -4.67, -5.16, -5.0, -5.54, -5.07, -5.83, -6.9, -7.68, -7.34, -7.49, -7.94, -9.34, -9.15, -9.31, -9.7, -9.56, -10.73, -9.44, -9.75, -9.43, -9.16, -7.62, -7.35, -6.85, -7.09, -7.42, -7.3, -8.44, -9.83, -10.14, -8.96, -8.95, -8.22, -7.92, -7.67, -7.15, -6.63, -6.92, -7.11, -6.87, -7.13, -6.24, -6.37, -5.92, -6.48, -6.56, -7.21, -7.52, -7.97, -9.09, -9.41, -9.0, -8.67, -8.06, -7.32, -7.44, -7.87, -7.39, -7.15, -6.87, -7.77, -6.54, -6.16, -6.22, -5.4, -5.36, -5.63, -5.57, -4.38, -3.81, -3.7, -3.62, -3.4, -3.01, -3.1, -3.75, -3.33, -3.13, -3.42, -3.04, -3.24, -2.95, -2.17, -2.47, -2.16, -2.25, -3.28, -3.71, -3.1, -1.94, -1.89, -1.75, -1.48, -1.44, -2.87, -2.72, -1.76, -3.51, -3.48, -4.01, -3.81, -3.11, -2.85, -3.66, -3.48, -3.57, -2.77, -2.33, -2.57, -3.01, -3.33, -3.79, -2.82, -2.02, -1.67];
+const benchmarkDD  = [0.0, 0.0, -1.04, -1.32, -2.05, -0.72, -1.75, -1.85, -2.05, -1.51, -1.85, -0.98, -0.37, -0.68, -1.12, -0.63, -0.63, -1.87, -3.45, -3.2, -3.13, -3.38, -3.41, -2.08, -2.57, -2.8, -1.98, -1.86, -2.06, -2.53, -1.66, -1.19, -1.08, -1.58, -2.13, -2.23, -3.72, -3.96, -4.21, -4.61, -5.09, -4.29, -4.99, -3.5, -2.86, -2.62, -3.53, -4.5, -5.91, -6.52, -6.91, -6.84, -6.21, -6.82, -6.17, -5.93, -6.34, -7.06, -6.84, -7.03, -6.32, -4.79, -4.58, -3.7, -3.47, -3.34, -2.8, -2.3, -2.22, -2.88, -3.14, -3.37, -3.34, -3.34, -2.68, -2.54, -2.3, -1.74, -0.92, -0.47, -0.78, 0.0, -1.02, 0.0, 0.0, 0.0, -0.1, -0.0, 0.0, -0.61, -1.18, -1.46, -1.06, -0.46, -0.28, -0.62, -0.42, 0.0, 0.0, 0.0, -0.53, -0.78, -0.54, -0.21, -0.19, 0.0, -0.49, -0.87, -0.67, -0.05, 0.0, -0.36, 0.0, -0.37, -0.05, 0.0, -0.45, -1.01, -0.88, -0.21, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.85, -0.73, -0.3, -0.58, -0.43, 0.0, 0.0, 0.0, 0.0, 0.0, -1.17, -1.54, -1.49, -1.01, -1.6, -1.67, -1.13, -1.23, -2.27, -2.99, -2.31, -1.91, -2.04, -1.73, -2.18, -2.76, -2.73, -2.57, -3.07, -3.35, -2.93, -2.92, -2.68, -2.97, -3.57, -3.37, -3.19, -3.16, -3.63, -2.72, -2.25, -2.02, -1.84, -1.26, -0.8, 0.0, -0.02, 0.0, 0.0, 0.0, -0.29, -1.44, -2.23, -2.57, -2.56, -2.61, -2.36, -3.31, -2.74, -3.29, -3.75, -3.2, -2.67, -3.37, -2.49, -1.89, -1.97, -2.19, -2.28, -1.89, -2.58, -2.81, -3.22, -4.51, -5.3, -6.61, -5.67, -5.21, -5.51, -5.96, -5.25, -4.76, -3.87, -3.89, -3.71, -3.95, -3.8, -3.71, -2.56, -2.12, -2.28, -2.47, -2.03, -1.88, -1.93, -1.97, -1.5, -0.47, -0.29, 0.0, 0.0, 0.0, 0.0, -0.17, 0.0, 0.0, -0.43, -0.34, 0.0, 0.0, -0.18, -0.02, -1.43, -0.94, -0.5, -0.07, 0.0, 0.0, -0.22, -0.17, -0.52, -1.2, -0.55, -0.31, -1.22, -1.07, -0.73, -0.6, 0.0, 0.0, -0.29, -2.38, -2.87, -2.15, -3.89, -2.91, -3.37, -1.63, -2.6, -1.68, -1.81, -1.1, -1.47, -0.76, -0.76, -1.72, -1.43, -2.18, -1.6, -1.16, -0.84, -0.26, 0.0, 0.0, -0.64, 0.0, -0.02, -0.43, -0.09, -1.2, -1.06, 0.0, 0.0, -0.22, 0.0, 0.0, -0.72, -0.7, -2.2, -1.54, -2.09, -1.95, -3.01, -2.91, -2.14, -1.76, -2.17, -1.64, -0.74, -0.14, -0.18, -0.26, 0.0, -0.0, 0.0, -0.1, 0.0, -1.03, -2.12, -2.66, -3.33, -2.67, -1.83, -1.7, -1.54, -0.81, -1.47, -0.49, -0.65, -0.46, -1.22, -1.37, -1.98, -1.98, -3.5, -3.07, -2.86, -2.36, -2.43, -1.54, -1.26, -0.99, -0.69, 0.0, -0.05, -0.15, -0.35, -1.14, -2.09, -1.9, 0.0, -5.93, -2.77, -1.9, 0.0, -0.13, -0.11, 0.0, 0.0, 0.0, 0.0, -0.18, 0.0, -0.28, -0.12, 0.0, 0.0, 0.0, -0.14, 0.0, -0.07, 0.0, 0.0, 0.0, -0.01, 0.0, -0.45, -0.48, 0.0, 0.0, 0.0, 0.0, -1.09, -1.18, -1.3, -1.56, -1.59, 0.0, 0.0, 0.0, 0.0, 0.0, -1.17, -3.82, -4.07, -2.85, -3.57, -2.57, -2.65, -3.49, -3.47, -1.88, -1.75, -1.25, -0.96, -0.8, -0.75, -0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -0.32, -0.53, -1.69, -1.36, -0.94, -1.43, 0.0, -0.13, -0.02, 0.0, -0.16, -0.01, 0.0, 0.0, 0.0, 0.0, 0.0, -0.14, -1.55, -1.6, -3.68, -4.58, -5.42, -4.59, -4.71, -4.64, -4.77, -4.15, -4.42, -4.75, -5.59, -5.2, -5.47, -6.65, -6.79, -6.93, -7.76, -7.16, -6.67, -7.15, -7.67, -7.29, -8.47, -7.64, -6.61, -7.69, -7.89, -7.91, -8.9, -10.14, -10.24, -10.54, -10.29, -10.93, -8.81, -7.61, -7.71, -7.4, -8.78, -7.95, -7.4, -6.71, -6.67, -5.75, -5.87, -6.09, -6.13, -6.0, -6.36, -5.52, -5.9, -7.17, -7.69, -8.64, -10.03, -9.39, -9.49, -9.41, -9.16, -9.81, -9.81, -9.43, -7.73, -8.43, -9.92, -9.57, -9.64, -10.26, -10.62, -11.94, -11.6, -11.45, -11.08, -11.49, -10.95, -12.17, -11.67, -11.48, -11.92, -12.92, -12.43, -11.65, -11.32, -10.33, -10.43, -10.89, -9.45, -9.61, -9.97, -10.13, -10.81, -11.99, -12.09, -12.15, -12.54, -12.42, -12.48, -12.52, -12.6, -13.05, -13.97, -13.99, -14.0, -15.61, -15.63, -15.77, -14.8, -14.0, -13.97, -14.33, -14.18, -14.29, -14.57, -14.14, -12.9, -12.62, -11.54, -10.93, -9.76, -9.72, -10.41, -10.01, -10.29, -11.64, -11.0, -11.31, -12.63, -15.47, -14.04, -14.56, -12.92, -11.01, -10.6, -9.02, -7.97, -7.82, -7.2, -7.51, -8.3, -7.2, -7.17, -7.18, -7.13, -6.69, -7.01, -6.87, -7.41, -8.42, -4.93, -6.25, -5.91, -4.4, -4.56, -4.85, -5.84, -5.35, -6.13, -5.2, -4.63, -5.3, -5.58, -5.27, -5.59, -5.72, -6.38, -6.09, -5.59, -4.63, -4.24, -4.24, -4.1, -5.07, -5.71, -4.84, -5.2, -5.36, -5.43, -4.21, -4.75, -4.47, -3.7, -2.54, -2.21, -2.67, -2.57, -2.91, -3.09, -2.88, -2.88, -2.65, -2.82, -3.28, -4.07, -4.32, -3.89, -3.83, -4.21, -4.76, -4.29, -4.41, -3.8, -4.4, -5.26, -5.86, -5.32, -5.19, -5.52, -6.3, -5.7, -5.98, -6.26, -6.18, -7.07, -6.22, -6.59, -6.09, -6.04, -5.11, -4.71, -4.45, -4.32, -5.13, -4.76, -5.74, -6.54, -6.82, -6.07, -6.24, -5.73, -5.65, -5.63, -5.5, -5.14, -4.74, -4.62, -4.2, -4.37, -3.73, -3.38, -3.02, -3.39, -3.87, -3.99, -4.42, -5.05, -5.96, -6.03, -6.12, -5.26, -5.04, -4.34, -4.23, -4.46, -3.95, -3.55, -3.77, -4.08, -3.4, -2.41, -1.93, -1.42, -1.33, -1.24, -1.61, -0.95, -1.07, -0.62, -1.29, -1.88, -1.73, -2.36, -2.69, -2.76, -2.45, -1.99, -1.3, -1.29, -1.17, -0.77, -1.17, -0.62, -0.09, -0.56, -0.98, -1.26, -0.04, -0.0, -0.05, -0.15, -0.7, -0.88, -0.7, -0.11, -0.97, -1.44, -1.75, -1.21, -0.65, -0.72, -1.36, -1.52, -1.53, -0.95, -0.17, -0.15, -0.28, -0.66, -1.04, -1.06, -0.33, -0.27];
+
+Chart.defaults.color = '#8892b0';
+Chart.defaults.font.family = 'Inter';
+Chart.defaults.borderColor = 'rgba(255,255,255,0.05)';
+
+// ── Equity Curve ─────────────────────────────────────────────
+const eqCtx = document.getElementById('equityChart').getContext('2d');
+new Chart(eqCtx, {
+  type: 'line',
+  data: {
+    labels: equityDates,
+    datasets: [
+      {
+        label: 'Quant Strategy',
+        data: strategyEq,
+        borderColor: '#48e5c2',
+        backgroundColor: 'rgba(72,229,194,0.08)',
+        fill: true,
+        borderWidth: 2,
+        pointRadius: 0,
+        tension: 0.25,
+      },
+      {
+        label: 'Nifty 50',
+        data: benchmarkEq,
+        borderColor: '#6c63ff',
+        backgroundColor: 'rgba(108,99,255,0.06)',
+        fill: true,
+        borderWidth: 2,
+        pointRadius: 0,
+        tension: 0.25,
+      },
+    ]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { labels: { boxWidth: 12, font: { size: 11 } } },
+      tooltip: {
+        callbacks: {
+          label: (ctx) => ` ${ctx.dataset.label}: ₹${Number(ctx.parsed.y).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`
+        }
+      }
+    },
+    scales: {
+      x: { ticks: { maxTicksLimit: 12, font: { size: 9 } }, grid: { display: false } },
+      y: { ticks: { font: { size: 10 }, callback: (v) => '₹' + (v / 1000).toFixed(0) + 'k' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+    }
+  }
+});
+
+// ── Drawdown ─────────────────────────────────────────────────
+const ddCtx = document.getElementById('drawdownChart').getContext('2d');
+new Chart(ddCtx, {
+  type: 'line',
+  data: {
+    labels: ddDates,
+    datasets: [
+      {
+        label: 'Strategy DD',
+        data: strategyDD,
+        borderColor: '#ff6584',
+        backgroundColor: 'rgba(255,101,132,0.18)',
+        fill: true,
+        borderWidth: 1.5,
+        pointRadius: 0,
+        tension: 0.25,
+      },
+      {
+        label: 'Benchmark DD',
+        data: benchmarkDD,
+        borderColor: '#8892b0',
+        backgroundColor: 'rgba(136,146,176,0.12)',
+        fill: true,
+        borderWidth: 1.5,
+        pointRadius: 0,
+        tension: 0.25,
+      },
+    ]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { labels: { boxWidth: 12, font: { size: 11 } } },
+      tooltip: { callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${Number(ctx.parsed.y).toFixed(1)}%` } }
+    },
+    scales: {
+      x: { ticks: { maxTicksLimit: 12, font: { size: 9 } }, grid: { display: false } },
+      y: { ticks: { font: { size: 10 }, callback: (v) => v.toFixed(0) + '%' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+    }
+  }
+});
+</script>
+</body>
+</html>

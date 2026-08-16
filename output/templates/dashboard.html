@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stock Scoring Engine — Daily Report</title>
+  <meta name="description" content="Quantitative scoring engine daily report for NSE stocks — momentum, quality, value, technical, F&O, and events factors." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg:          #0a0b14;
+      --surface:     #111221;
+      --surface2:    #181a2e;
+      --border:      #1e2140;
+      --border2:     #252848;
+      --accent:      #6c63ff;
+      --accent2:     #48e5c2;
+      --accent3:     #ff6584;
+      --text:        #e8eaf6;
+      --text-dim:    #8892b0;
+      --text-muted:  #4a5568;
+      --green:       #48e5c2;
+      --red:         #ff6584;
+      --yellow:      #ffd166;
+      --radius:      12px;
+      --radius-sm:   8px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    /* ── HEADER ── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 32px;
+      padding: 24px 32px;
+      background: linear-gradient(135deg, var(--surface) 0%, var(--surface2) 100%);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      position: relative;
+      overflow: hidden;
+    }
+    .header::before {
+      content: '';
+      position: absolute;
+      top: -40px; left: -40px;
+      width: 200px; height: 200px;
+      background: radial-gradient(circle, rgba(108,99,255,0.15) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .header-left h1 {
+      font-size: 1.75rem;
+      font-weight: 800;
+      background: linear-gradient(135deg, #6c63ff, #48e5c2);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      letter-spacing: -0.5px;
+    }
+    .header-left p {
+      color: var(--text-dim);
+      font-size: 0.875rem;
+      margin-top: 4px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-radius: 100px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .badge-live {
+      background: rgba(72,229,194,0.12);
+      border: 1px solid rgba(72,229,194,0.3);
+      color: var(--green);
+    }
+    .badge-live::before {
+      content: '';
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.5; transform: scale(1.4); }
+    }
+
+    /* ── STATS ROW ── */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 16px;
+      margin-bottom: 32px;
+    }
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      transition: border-color 0.2s, transform 0.2s;
+    }
+    .stat-card:hover { border-color: var(--border2); transform: translateY(-2px); }
+    .stat-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); }
+    .stat-value { font-size: 2rem; font-weight: 700; margin-top: 6px; }
+    .stat-value.green { color: var(--green); }
+    .stat-value.accent { color: var(--accent); }
+    .stat-value.yellow { color: var(--yellow); }
+
+    /* ── SECTION ── */
+    .section { margin-bottom: 32px; }
+    .section-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .section-title::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
+    }
+
+    /* ── SHORTLIST CARDS ── */
+    .shortlist-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 16px;
+    }
+    .stock-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      position: relative;
+      overflow: hidden;
+    }
+    .stock-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    .stock-card:hover { border-color: var(--border2); transform: translateY(-3px); box-shadow: 0 8px 32px rgba(0,0,0,0.4); }
+    .stock-card:hover::before { opacity: 1; }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .card-symbol {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .card-rank {
+      font-size: 0.72rem;
+      color: var(--text-dim);
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 100px;
+      padding: 3px 10px;
+    }
+    .score-ring {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 16px;
+      width: 80px;
+      height: 80px;
+      position: relative;
+    }
+    .score-ring canvas { position: absolute; top: 0; left: 0; }
+    .score-text {
+      font-size: 1.3rem;
+      font-weight: 800;
+      color: var(--text);
+      z-index: 1;
+    }
+    .factor-bars { display: flex; flex-direction: column; gap: 6px; }
+    .factor-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .factor-label {
+      font-size: 0.68rem;
+      color: var(--text-dim);
+      width: 64px;
+      flex-shrink: 0;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .factor-bar-bg {
+      flex: 1;
+      height: 4px;
+      background: var(--border);
+      border-radius: 100px;
+      overflow: hidden;
+    }
+    .factor-bar-fill {
+      height: 100%;
+      border-radius: 100px;
+      transition: width 0.6s ease;
+    }
+    .factor-val {
+      font-size: 0.68rem;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--text-dim);
+      width: 30px;
+      text-align: right;
+    }
+
+    /* ── FULL TABLE ── */
+    .table-wrapper {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.825rem;
+    }
+    thead { background: var(--surface2); }
+    thead th {
+      padding: 12px 16px;
+      text-align: left;
+      font-weight: 600;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-dim);
+      white-space: nowrap;
+    }
+    tbody tr {
+      border-top: 1px solid var(--border);
+      transition: background 0.15s;
+    }
+    tbody tr:hover { background: rgba(108,99,255,0.05); }
+    tbody tr.shortlisted { border-left: 3px solid var(--accent2); }
+    td {
+      padding: 12px 16px;
+      white-space: nowrap;
+    }
+    .sym-cell {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .rank-cell { color: var(--text-dim); font-weight: 600; }
+    .score-cell { font-weight: 700; }
+    .score-badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 100px;
+      font-size: 0.75rem;
+      font-weight: 700;
+    }
+    .score-high   { background: rgba(72,229,194,0.15); color: var(--green); }
+    .score-mid    { background: rgba(108,99,255,0.15); color: var(--accent); }
+    .score-low    { background: rgba(255,101,132,0.12); color: var(--red); }
+    .shortlist-tag {
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 100px;
+      background: rgba(72,229,194,0.1);
+      border: 1px solid rgba(72,229,194,0.25);
+      color: var(--green);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* ── CHART SECTION ── */
+    .charts-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 32px;
+    }
+    .chart-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+    }
+    .chart-card h3 {
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-dim);
+      margin-bottom: 16px;
+    }
+    canvas.chart-canvas { width: 100% !important; height: 220px !important; }
+
+    /* ── FOOTER ── */
+    footer {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      padding: 24px 0 0;
+      border-top: 1px solid var(--border);
+      margin-top: 32px;
+    }
+
+    @media (max-width: 768px) {
+      .charts-row { grid-template-columns: 1fr; }
+      .header { flex-direction: column; gap: 12px; align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="header-left">
+    <h1>📈 Stock Scoring Engine</h1>
+    <p>NSE Quantitative Pipeline — Run: {{ run_at }}</p>
+  </div>
+  <span class="badge badge-live">Stage 1 Complete</span>
+</div>
+
+<!-- STATS ROW -->
+<div class="stats-row">
+  <div class="stat-card">
+    <div class="stat-label">Total Scored</div>
+    <div class="stat-value accent">{{ total_scored }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Shortlisted</div>
+    <div class="stat-value green">{{ shortlist | length }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Top Score</div>
+    <div class="stat-value yellow">
+      {% if shortlist %}{{ shortlist[0].quant_score }}{% else %}—{% endif %}
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Top Symbol</div>
+    <div class="stat-value" style="font-size:1.4rem; color:var(--text);">
+      {% if shortlist %}{{ shortlist[0].symbol }}{% else %}—{% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- CHARTS -->
+<div class="charts-row">
+  <div class="chart-card">
+    <h3>📊 Top 10 — Quant Scores</h3>
+    <canvas id="barChart" class="chart-canvas"></canvas>
+  </div>
+  <div class="chart-card">
+    <h3>🕸 Factor Breakdown — #1 Stock</h3>
+    <canvas id="radarChart" class="chart-canvas"></canvas>
+  </div>
+</div>
+
+<!-- SHORTLIST CARDS -->
+<div class="section">
+  <div class="section-title">⭐ Shortlisted Stocks (Top {{ shortlist | length }})</div>
+  <div class="shortlist-grid" id="shortlistGrid">
+    {% for s in shortlist %}
+    <div class="stock-card" id="card-{{ s.symbol }}">
+      <div class="card-header">
+        <span class="card-symbol">{{ s.symbol }}</span>
+        <span class="card-rank">#{{ s.rank }}</span>
+      </div>
+      <div style="text-align:center; margin-bottom:12px;">
+        <div style="font-size:2.2rem; font-weight:800;
+          background:linear-gradient(135deg,#6c63ff,#48e5c2);
+          -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+          background-clip:text;">
+          {{ s.quant_score }}
+        </div>
+        <div style="font-size:0.72rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:1px; margin-top:2px;">Quant Score</div>
+      </div>
+      <div class="factor-bars">
+        {% set factors = [
+          ('Momentum', s.momentum_score,  '#6c63ff'),
+          ('Liquidity', s.liquidity_score, '#48e5c2'),
+          ('Quality',  s.quality_score,   '#ffd166'),
+          ('Value',    s.value_score,     '#ff6584'),
+          ('Technical',s.technical_score, '#4ecdc4'),
+          ('F&O',      s.fno_score,       '#a8edea'),
+          ('Events',   s.events_score,    '#ff9a9e'),
+        ] %}
+        {% for label, val, color in factors %}
+        <div class="factor-row">
+          <span class="factor-label">{{ label }}</span>
+          <div class="factor-bar-bg">
+            <div class="factor-bar-fill" style="width:{{ val }}%; background:{{ color }};"></div>
+          </div>
+          <span class="factor-val">{{ val }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- FULL RANKED TABLE -->
+<div class="section">
+  <div class="section-title">📋 Full Rankings (Top 50)</div>
+  <div class="table-wrapper">
+    <table>
+      <thead>
+        <tr>
+          <th>Rank</th>
+          <th>Symbol</th>
+          <th>Score</th>
+          <th>Momentum</th>
+          <th>Liquidity</th>
+          <th>Quality</th>
+          <th>Value</th>
+          <th>Technical</th>
+          <th>F&amp;O</th>
+          <th>Events</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in all_stocks %}
+        <tr class="{% if s.shortlisted %}shortlisted{% endif %}">
+          <td class="rank-cell">#{{ s.rank }}</td>
+          <td class="sym-cell">{{ s.symbol }}</td>
+          <td class="score-cell">
+            <span class="score-badge
+              {% if s.quant_score >= 70 %}score-high
+              {% elif s.quant_score >= 50 %}score-mid
+              {% else %}score-low{% endif %}">
+              {{ s.quant_score }}
+            </span>
+          </td>
+          <td>{{ s.momentum_score }}</td>
+          <td>{{ s.liquidity_score }}</td>
+          <td>{{ s.quality_score }}</td>
+          <td>{{ s.value_score }}</td>
+          <td>{{ s.technical_score }}</td>
+          <td>{{ s.fno_score }}</td>
+          <td>{{ s.events_score }}</td>
+          <td>
+            {% if s.shortlisted %}
+            <span class="shortlist-tag">✓ Shortlisted</span>
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<footer>
+  Generated by Stock Scoring Engine · NSE Data via Yahoo Finance · {{ run_at }}
+</footer>
+
+<script>
+// ── Data from Jinja2 ──────────────────────────────────────────
+const shortlist = {{ shortlist | tojson }};
+const top10 = shortlist.slice(0, 10);
+
+// ── Bar Chart: Top 10 Quant Scores ───────────────────────────
+const barCtx = document.getElementById('barChart').getContext('2d');
+new Chart(barCtx, {
+  type: 'bar',
+  data: {
+    labels: top10.map(s => s.symbol),
+    datasets: [{
+      label: 'Quant Score',
+      data: top10.map(s => s.quant_score),
+      backgroundColor: top10.map((_, i) => {
+        const alpha = 0.85 - i * 0.05;
+        return `rgba(108,99,255,${alpha})`;
+      }),
+      borderColor: 'rgba(108,99,255,0.8)',
+      borderWidth: 1,
+      borderRadius: 6,
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: {
+        ticks: { color: '#8892b0', font: { family: 'JetBrains Mono', size: 10 } },
+        grid: { color: 'rgba(255,255,255,0.04)' },
+      },
+      y: {
+        min: 0, max: 100,
+        ticks: { color: '#8892b0', font: { size: 10 } },
+        grid: { color: 'rgba(255,255,255,0.06)' },
+      }
+    }
+  }
+});
+
+// ── Radar Chart: Top 1 Stock Factor Breakdown ─────────────────
+const radarCtx = document.getElementById('radarChart').getContext('2d');
+const top1 = shortlist[0] || {};
+new Chart(radarCtx, {
+  type: 'radar',
+  data: {
+    labels: ['Momentum', 'Liquidity', 'Quality', 'Value', 'Technical', 'F&O', 'Events'],
+    datasets: [{
+      label: top1.symbol || '—',
+      data: [
+        top1.momentum_score,
+        top1.liquidity_score,
+        top1.quality_score,
+        top1.value_score,
+        top1.technical_score,
+        top1.fno_score,
+        top1.events_score,
+      ],
+      backgroundColor: 'rgba(72,229,194,0.12)',
+      borderColor: 'rgba(72,229,194,0.8)',
+      borderWidth: 2,
+      pointBackgroundColor: 'rgba(72,229,194,1)',
+      pointRadius: 4,
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        labels: { color: '#8892b0', font: { size: 11 } }
+      }
+    },
+    scales: {
+      r: {
+        min: 0, max: 100,
+        ticks: { display: false },
+        grid: { color: 'rgba(255,255,255,0.07)' },
+        angleLines: { color: 'rgba(255,255,255,0.07)' },
+        pointLabels: { color: '#8892b0', font: { size: 10 } },
+      }
+    }
+  }
+});
+
+// ── Animate factor bars on load ───────────────────────────────
+document.querySelectorAll('.factor-bar-fill').forEach(el => {
+  const target = el.style.width;
+  el.style.width = '0%';
+  requestAnimationFrame(() => {
+    setTimeout(() => { el.style.width = target; }, 100);
+  });
+});
+</script>
+</body>
+</html>
