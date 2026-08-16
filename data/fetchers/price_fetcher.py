@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 import yfinance as yf
 
-from config.settings import CACHE_DIR, LOOKBACK_DAYS, PRICE_CACHE_TTL_HOURS
+from config.settings import CACHE_DIR, LOOKBACK_DAYS, PRICE_CACHE_TTL_HOURS, PRICE_BATCH_CHUNK
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +77,58 @@ def fetch_price_data(
         return None
 
 
+def _download_and_extract(
+    batch: list[str],
+    start: datetime,
+    end: datetime,
+    results: dict[str, pd.DataFrame],
+) -> None:
+    """Download one chunk of tickers via yfinance and extract per-ticker frames."""
+    if not batch:
+        return
+    # yfinance batch download (much faster than individual calls)
+    try:
+        raw = yf.download(
+            tickers=" ".join(batch),
+            start=start.strftime("%Y-%m-%d"),
+            end=end.strftime("%Y-%m-%d"),
+            auto_adjust=True,
+            progress=False,
+            threads=True,
+        )
+    except Exception as e:
+        logger.error(f"Batch download failed: {e}")
+        raw = pd.DataFrame()
+
+    if raw.empty:
+        return
+
+    # yfinance batch returns MultiIndex columns: (field, ticker)
+    if isinstance(raw.columns, pd.MultiIndex):
+        for ticker in batch:
+            try:
+                df = raw.xs(ticker, level=1, axis=1)[
+                    ["Open", "High", "Low", "Close", "Volume"]
+                ].dropna(how="all")
+                if df.empty:
+                    continue
+                df.index = pd.to_datetime(df.index).tz_localize(None)
+                os.makedirs(PRICE_CACHE_DIR, exist_ok=True)
+                df.to_parquet(_cache_path(ticker))
+                results[ticker] = df
+            except Exception as e:
+                logger.warning(f"Could not extract {ticker}: {e}")
+    else:
+        # Single ticker batch
+        if len(batch) == 1:
+            ticker = batch[0]
+            df = raw[["Open", "High", "Low", "Close", "Volume"]].dropna(how="all")
+            if not df.empty:
+                df.index = pd.to_datetime(df.index).tz_localize(None)
+                df.to_parquet(_cache_path(ticker))
+                results[ticker] = df
+
+
 def fetch_price_batch(
     tickers: list[str],
     force_refresh: bool = False,
@@ -85,6 +137,9 @@ def fetch_price_batch(
 ) -> dict[str, pd.DataFrame]:
     """
     Fetch OHLCV for a batch of tickers.
+
+    Downloads are chunked (PRICE_BATCH_CHUNK per call) so large universes
+    (e.g. Nifty 500) don't hit a single oversized request.
 
     Returns dict: { ticker -> DataFrame }
     Failed tickers are omitted.
@@ -109,45 +164,32 @@ def fetch_price_batch(
         end = datetime.today()
         start = end - timedelta(days=period_days)
 
-        # yfinance batch download (much faster than individual calls)
-        try:
-            raw = yf.download(
-                tickers=" ".join(to_download),
-                start=start.strftime("%Y-%m-%d"),
-                end=end.strftime("%Y-%m-%d"),
-                auto_adjust=True,
-                progress=False,
-                threads=True,
-            )
-        except Exception as e:
-            logger.error(f"Batch download failed: {e}")
-            raw = pd.DataFrame()
+        chunk_size = PRICE_BATCH_CHUNK
+        total_chunks = (len(to_download) + chunk_size - 1) // chunk_size
+        for i in range(0, len(to_download), chunk_size):
+            chunk = to_download[i:i + chunk_size]
+            if total_chunks > 1:
+                logger.info(
+                    f"  price chunk {i // chunk_size + 1}/{total_chunks}: "
+                    f"{len(chunk)} tickers"
+                )
+            _download_and_extract(chunk, start, end, results)
 
-        if not raw.empty:
-            # yfinance batch returns MultiIndex columns: (field, ticker)
-            if isinstance(raw.columns, pd.MultiIndex):
-                for ticker in to_download:
-                    try:
-                        df = raw.xs(ticker, level=1, axis=1)[
-                            ["Open", "High", "Low", "Close", "Volume"]
-                        ].dropna(how="all")
-                        if df.empty:
-                            continue
-                        df.index = pd.to_datetime(df.index).tz_localize(None)
-                        os.makedirs(PRICE_CACHE_DIR, exist_ok=True)
-                        df.to_parquet(_cache_path(ticker))
-                        results[ticker] = df
-                    except Exception as e:
-                        logger.warning(f"Could not extract {ticker}: {e}")
-            else:
-                # Single ticker batch
-                if len(to_download) == 1:
-                    ticker = to_download[0]
-                    df = raw[["Open", "High", "Low", "Close", "Volume"]].dropna(how="all")
-                    if not df.empty:
-                        df.index = pd.to_datetime(df.index).tz_localize(None)
-                        df.to_parquet(_cache_path(ticker))
-                        results[ticker] = df
+        # Batch downloads are flaky under Yahoo throttling — retry the
+        # leftovers individually so transient failures are not mistaken
+        # for delisted symbols.
+        missing = [t for t in to_download if t not in results]
+        if missing:
+            logger.info(f"Retrying {len(missing)} symbols individually...")
+            for t in missing:
+                df = fetch_price_data(
+                    t,
+                    force_refresh=True,
+                    period_days=period_days,
+                    ttl_hours=cache_ttl,
+                )
+                if df is not None and not df.empty:
+                    results[t] = df
 
     logger.info(f"Price data ready for {len(results)}/{len(tickers)} tickers.")
     return results

@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Environment
+.env
+
+# Downloaded/cached market data (regenerated on demand)
+data/cache/
+
+# Generated results & logs (recreated each run)
+output/logs/
+output/reports/

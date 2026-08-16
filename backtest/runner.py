@@ -6,25 +6,24 @@ Simulates rolling rebalance periods over historical timelines:
   - Point-in-time portfolio selection (no lookahead bias)
   - Equal-weighted Top-N portfolio with turnover-based fees
   - Tracks daily equity curve vs Nifty 50 benchmark
-  - Computes complete performance report (JSON + HTML)
+  - Computes complete performance report (JSON + CSV)
 """
 
 import os
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
-from jinja2 import Environment, FileSystemLoader
 from rich.console import Console
 from rich.table import Table
 
-from config.settings import OUTPUT_DIR, TEMPLATE_DIR
+from config.settings import OUTPUT_DIR, RUNS_DIR
 from data.universe import load_universe
 from backtest.data_loader import load_backtest_benchmark, load_backtest_price_data
 from backtest.pit_engine import score_point_in_time
-from backtest.metrics import calculate_full_performance, compute_monthly_matrix
+from backtest.metrics import calculate_full_performance
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -207,7 +206,6 @@ class BacktestRunner:
             rebalance_returns=pd.Series(period_returns),
         )
         metrics["factors_used"] = factors_used
-        benchmark_monthly = compute_monthly_matrix(benchmark_equity)
 
         self._print_backtest_summary(metrics)
 
@@ -216,7 +214,6 @@ class BacktestRunner:
             metrics=metrics,
             strategy_equity=strategy_equity,
             benchmark_equity=benchmark_equity,
-            benchmark_monthly=benchmark_monthly,
             rebalance_logs=rebalance_logs,
         )
 
@@ -236,12 +233,6 @@ class BacktestRunner:
         old_set, new_set = set(old_port), set(new_port)
         changed = len(old_set.symmetric_difference(new_set))
         return changed / (2.0 * max(len(old_port), 1))
-
-    @staticmethod
-    def _compute_drawdown_series(equity_curve: pd.Series) -> pd.Series:
-        """Drawdown series in % (negative values = underwater)."""
-        cummax = equity_curve.cummax()
-        return ((equity_curve - cummax) / cummax) * 100
 
     def _print_backtest_summary(self, metrics: dict) -> None:
         """Print rich summary table of backtest results."""
@@ -272,15 +263,14 @@ class BacktestRunner:
         metrics: dict,
         strategy_equity: pd.Series,
         benchmark_equity: pd.Series,
-        benchmark_monthly: pd.DataFrame,
         rebalance_logs: list[dict],
     ) -> dict[str, str]:
-        """Save JSON & HTML backtest reports."""
+        """Save JSON & CSV backtest reports."""
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_dir = os.path.join(RUNS_DIR, ts)
+        os.makedirs(run_dir, exist_ok=True)
 
-        # JSON summary
-        json_path = os.path.join(OUTPUT_DIR, f"backtest_{ts}.json")
         report_data = {
             "run_at": ts,
             "period": {
@@ -303,82 +293,63 @@ class BacktestRunner:
             },
         }
 
+        paths: dict[str, str] = {}
+
+        # ── Timestamped archive ──────────────────────────────────────
+        json_path = os.path.join(run_dir, f"backtest_{ts}.json")
         with open(json_path, "w") as f:
             json.dump(report_data, f, indent=2, default=str)
+        paths["json"] = json_path
 
+        equity_csv = os.path.join(run_dir, f"backtest_{ts}.csv")
+        self._save_equity_csv(strategy_equity, benchmark_equity, equity_csv)
+        paths["csv"] = equity_csv
+
+        rebalance_csv = os.path.join(run_dir, f"backtest_{ts}_rebalance.csv")
+        self._save_rebalance_csv(rebalance_logs, rebalance_csv)
+        paths["rebalance_csv"] = rebalance_csv
+
+        # ── latest.* (always overwrite for easy consumption) ─────────
         latest_json = os.path.join(OUTPUT_DIR, "latest_backtest.json")
         with open(latest_json, "w") as f:
             json.dump(report_data, f, indent=2, default=str)
+        paths["latest_json"] = latest_json
 
-        console.print(f"\n[bold green]Backtest JSON saved -> {json_path}[/]")
+        latest_csv = os.path.join(OUTPUT_DIR, "latest_backtest.csv")
+        self._save_equity_csv(strategy_equity, benchmark_equity, latest_csv)
+        paths["latest_csv"] = latest_csv
 
-        # HTML report
-        html_path = os.path.join(OUTPUT_DIR, "backtest_report.html")
-        rendered = self._render_backtest_html(
-            run_ts=ts,
-            metrics=metrics,
-            strategy_equity=strategy_equity,
-            benchmark_equity=benchmark_equity,
-            benchmark_monthly=benchmark_monthly,
-            rebalance_logs=rebalance_logs,
-        )
-        if rendered:
-            with open(html_path, "w", encoding="utf-8") as f:
-                f.write(rendered)
-            console.print(f"[bold green]Backtest HTML report saved -> {html_path}[/]")
+        latest_rebalance_csv = os.path.join(OUTPUT_DIR, "latest_backtest_rebalance.csv")
+        self._save_rebalance_csv(rebalance_logs, latest_rebalance_csv)
+        paths["latest_rebalance_csv"] = latest_rebalance_csv
 
-        return {"json": json_path, "latest_json": latest_json, "html": html_path}
+        console.print(f"\n[bold green]Backtest reports saved -> {json_path}[/]")
+        return paths
 
-    def _render_backtest_html(
-        self,
-        run_ts: str,
-        metrics: dict,
+    @staticmethod
+    def _save_equity_csv(
         strategy_equity: pd.Series,
         benchmark_equity: pd.Series,
-        benchmark_monthly: pd.DataFrame,
-        rebalance_logs: list[dict],
-    ) -> str:
-        """Render the Jinja2 dark-mode backtest report."""
-        template_path = os.path.join(TEMPLATE_DIR, "backtest_report.html")
-        if not os.path.exists(template_path):
-            logger.warning(f"Backtest template not found: {template_path}")
-            return ""
+        path: str,
+    ) -> None:
+        """Save daily equity curve as CSV."""
+        equity_df = pd.DataFrame({
+            "date": [d.strftime("%Y-%m-%d") for d in strategy_equity.index],
+            "strategy_equity": strategy_equity.round(2).values,
+            "benchmark_equity": benchmark_equity.round(2).values,
+        })
+        equity_df.to_csv(path, index=False)
 
-        env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
-        tmpl = env.get_template("backtest_report.html")
-
-        strategy_dd = self._compute_drawdown_series(strategy_equity)
-        benchmark_dd = self._compute_drawdown_series(benchmark_equity)
-
-        monthly_pivot = metrics.get("monthly_matrix", {})
-        strategy_monthly = [
-            {"year": str(y), "months": months}
-            for y, months in monthly_pivot.items()
+    @staticmethod
+    def _save_rebalance_csv(rebalance_logs: list[dict], path: str) -> None:
+        """Save rebalance/trade log as CSV."""
+        rows = [
+            {
+                "date": log["date"],
+                "portfolio_size": log["portfolio_size"],
+                "capital": log["capital"],
+                "portfolio": "; ".join(log["portfolio"]),
+            }
+            for log in rebalance_logs
         ]
-        bench_monthly = [
-            {"year": str(y), "months": months}
-            for y, months in benchmark_monthly.to_dict(orient="index").items()
-        ]
-
-        return tmpl.render(
-            run_at=run_ts,
-            params={
-                "start": self.start_date.strftime("%Y-%m-%d"),
-                "end": self.end_date.strftime("%Y-%m-%d"),
-                "freq": self.freq,
-                "top_n": self.top_n,
-                "fee_pct": f"{self.fee_pct * 100:.2f}%",
-                "initial_capital": f"₹{self.initial_capital:,.0f}",
-            },
-            metrics=metrics,
-            factors_used=metrics.get("factors_used", {}),
-            equity_dates=[d.strftime("%Y-%m-%d") for d in strategy_equity.index],
-            strategy_equity=[round(float(v), 2) for v in strategy_equity.tolist()],
-            benchmark_equity=[round(float(v), 2) for v in benchmark_equity.tolist()],
-            drawdown_dates=[d.strftime("%Y-%m-%d") for d in strategy_dd.index],
-            strategy_drawdown=[round(float(v), 2) for v in strategy_dd.tolist()],
-            benchmark_drawdown=[round(float(v), 2) for v in benchmark_dd.tolist()],
-            strategy_monthly=strategy_monthly,
-            benchmark_monthly=bench_monthly,
-            rebalance_logs=rebalance_logs,
-        )
+        pd.DataFrame(rows).to_csv(path, index=False)

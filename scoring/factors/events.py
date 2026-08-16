@@ -14,10 +14,12 @@ Score: 0–100 (higher = fewer upcoming risk events)
 
 import logging
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import pandas as pd
 import yfinance as yf
+from rich.progress import track
 
 from config.settings import EARNINGS_PENALTY_DAYS
 
@@ -61,7 +63,7 @@ def compute_events_scores(tickers: list[str]) -> pd.DataFrame:
     rows: list[dict] = []
     today = datetime.now().date()
 
-    for ticker in tickers:
+    def _score(ticker: str) -> dict:
         next_earn = _get_next_earnings(ticker)
         days_away = None
         if next_earn is not None:
@@ -81,11 +83,24 @@ def compute_events_scores(tickers: list[str]) -> pd.DataFrame:
         else:
             score = 70.0
 
-        rows.append({
+        return {
             "ticker":           ticker,
             "days_to_earnings": days_away,
             "events_score":     score,
-        })
+        }
+
+    max_workers = min(8, len(tickers)) if tickers else 1
+    executor = ThreadPoolExecutor(max_workers=max_workers)
+    futures = {executor.submit(_score, t): t for t in tickers}
+    try:
+        for future in track(
+            as_completed(futures),
+            total=len(futures),
+            description="Events",
+        ):
+            rows.append(future.result())
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
     if not rows:
         return pd.DataFrame()

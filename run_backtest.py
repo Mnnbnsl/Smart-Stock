@@ -27,12 +27,12 @@ from rich.logging import RichHandler
 # ── Ensure project root is on sys.path ──────────────────────────
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config.settings import OUTPUT_DIR, DRY_RUN_SYMBOLS
+from config.settings import LOGS_DIR, DRY_RUN_SYMBOLS
 from backtest.runner import BacktestRunner
 
 # ── Logging setup ─────────────────────────────────────────────
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-_log_file = os.path.join(OUTPUT_DIR, "backtest.log")
+os.makedirs(LOGS_DIR, exist_ok=True)
+_log_file = os.path.join(LOGS_DIR, "backtest.log")
 logging.basicConfig(
     level=logging.INFO,
     format="%(message)s",

@@ -130,13 +130,39 @@ class ScoringEngine:
         price_data = fetch_price_batch(tickers, force_refresh=force_refresh)
         benchmark_df = get_benchmark_data(force_refresh=force_refresh)
 
+        # Only run the slow downstream fetches for symbols with valid price data.
+        # Delisted/renamed symbols cost 10-40s each on throttled Yahoo retries.
+        valid_tickers = [
+            t for t in tickers
+            if t in price_data and price_data[t] is not None and not price_data[t].empty
+        ]
+        dropped = set(tickers) - set(valid_tickers)
+        if dropped:
+            logger.warning(
+                f"Skipping {len(dropped)} symbols without price data: "
+                f"{sorted(dropped)}. Removing from fundamentals/F&O/events."
+            )
+            try:
+                from data.universe import mark_delisted
+                mark_delisted([t.replace(".NS", "") for t in dropped])
+            except Exception as e:
+                logger.debug(f"Could not persist delisted symbols: {e}")
+            logger.info(f"Proceeding with {len(valid_tickers)}/{len(tickers)} valid tickers.")
+
         # Fundamental data
-        fundamentals = fetch_fundamentals_batch(tickers, force_refresh=force_refresh)
+        fundamentals = fetch_fundamentals_batch(
+            valid_tickers, force_refresh=force_refresh
+        )
 
         # F&O data — only for F&O-eligible stocks
+        valid_nse_symbols = [
+            self.ticker_to_symbol.get(t, t.replace(".NS", "")) for t in valid_tickers
+        ]
         fno_data = pd.DataFrame()
         try:
-            fno_data = fetch_fno_batch(nse_symbols)
+            fno_data = fetch_fno_batch(valid_nse_symbols)
+        except KeyboardInterrupt:
+            raise
         except Exception as e:
             logger.warning(f"F&O data fetch failed: {e}. Skipping F&O factor.")
 
@@ -189,8 +215,8 @@ class ScoringEngine:
                 fno_scores.index = fno_scores.index.map(lambda s: symbol_to_ticker.get(s, f"{s}.NS"))
                 frames["fno"] = fno_scores[["fno_score"]]
 
-        # Events (uses tickers directly)
-        events = compute_events_scores(tickers)
+        # Events (uses tickers directly — only those with valid price data)
+        events = compute_events_scores(sorted(price_data.keys()))
         if not events.empty:
             frames["events"] = events[["events_score"]]
 
@@ -267,7 +293,7 @@ class ScoringEngine:
 
         top = df.head(min(30, len(df)))
         for _, row in top.iterrows():
-            shortlisted = "✅ YES" if row.get("shortlisted") else "—"
+            shortlisted = "YES" if row.get("shortlisted") else "-"
             table.add_row(
                 str(int(row.get("rank", 0))),
                 str(row.get("symbol", "")),

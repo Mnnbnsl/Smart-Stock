@@ -9,11 +9,17 @@ import os
 import json
 import logging
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
 import yfinance as yf
+from rich.progress import track
 
-from config.settings import CACHE_DIR, FUNDAMENTAL_CACHE_TTL_HOURS
+from config.settings import (
+    CACHE_DIR,
+    FUNDAMENTAL_CACHE_TTL_HOURS,
+    FUNDAMENTAL_WORKERS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -119,9 +125,22 @@ def fetch_fundamentals_batch(
     Returns a DataFrame indexed by ticker with all fundamental columns.
     """
     rows: list[dict] = []
-    for ticker in tickers:
-        d = fetch_fundamentals(ticker, force_refresh=force_refresh)
-        rows.append(d)
+    max_workers = min(FUNDAMENTAL_WORKERS, len(tickers)) if tickers else 1
+
+    def _fetch(ticker: str) -> dict:
+        return fetch_fundamentals(ticker, force_refresh=force_refresh)
+
+    executor = ThreadPoolExecutor(max_workers=max_workers)
+    futures = {executor.submit(_fetch, t): t for t in tickers}
+    try:
+        for future in track(
+            as_completed(futures),
+            total=len(futures),
+            description="Fundamentals",
+        ):
+            rows.append(future.result())
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
     df = pd.DataFrame(rows)
     if "ticker" in df.columns:

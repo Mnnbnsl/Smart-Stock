@@ -28,8 +28,8 @@ ALL NSE STOCKS (Nifty 500)
     Weighted composite → Top 25 shortlist
         ▼
 [5] Output               → output/
-    ├── final_ranker.py  (saves JSON, CSV, HTML dashboard)
-    └── reports/         (timestamped files + latest.json)
+    ├── final_ranker.py  (saves JSON + CSV results)
+    └── reports/         (latest.* + timestamped runs/ archive)
 
 [6] Backtester (validation) → backtest/
     ├── data_loader.py   (multi-year price history + cache)
@@ -115,11 +115,25 @@ python main.py --top-n 30        # shortlist 30 stocks
 
 ## Output Files
 
-After each run, `output/reports/` contains:
-- `latest.json`          — Machine-readable scored results
-- `scores_YYYYMMDD_HHMMSS.json`
-- `scores_YYYYMMDD_HHMMSS.csv`
-- `dashboard.html`       — Visual report (open in browser)
+Each run writes a timestamped archive plus a stable `latest` set that is always
+overwritten. All results are JSON + CSV only.
+
+```
+output/reports/
+├── latest.json                 # Machine-readable scored results
+├── latest.csv                  # Same results, tabular form
+├── latest_backtest.json        # Latest backtest summary + equity curve
+├── latest_backtest.csv         # Equity curve (date, strategy, benchmark)
+├── latest_backtest_rebalance.csv  # Trade/rebalance log
+└── runs/YYYYMMDD_HHMMSS/       # Timestamped archive per run
+    ├── scores_YYYYMMDD_HHMMSS.json
+    ├── scores_YYYYMMDD_HHMMSS.csv
+    ├── backtest_YYYYMMDD_HHMMSS.json
+    ├── backtest_YYYYMMDD_HHMMSS.csv
+    └── backtest_YYYYMMDD_HHMMSS_rebalance.csv
+```
+
+Console logs live in `output/logs/` (`engine.log`, `backtest.log`).
 
 ## Point-in-Time Backtester
 
@@ -152,12 +166,13 @@ python run_backtest.py --start 2024-01-01 --end 2025-01-01 --rebalance weekly --
 
 ### Outputs
 
-`output/reports/backtest_report.html` (dark-mode interactive report):
-- Equity curve vs Nifty 50, drawdown charts, monthly return heatmaps
-- Performance cards: Total Return, CAGR, Sharpe, Sortino, Max Drawdown, Alpha, Beta, Win Rate
-- Trade log table (portfolio constituents per rebalance)
+`latest_backtest.json` + `output/reports/runs/YYYYMMDD_HHMMSS/backtest_*.json`
+(machine-readable):
+- Performance metrics: Total Return, CAGR, Sharpe, Sortino, Max Drawdown, Alpha, Beta, Win Rate
+- Daily equity curve vs Nifty 50 and rebalance/trade log
 
-Plus `latest_backtest.json` / `backtest_YYYYMMDD_HHMMSS.json` (machine-readable).
+`latest_backtest.csv` + `latest_backtest_rebalance.csv` provide the same data in
+tabular form (equity curve and trade log).
 
 ### How Backtesting Works
 

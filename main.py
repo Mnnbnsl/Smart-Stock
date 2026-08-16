@@ -27,14 +27,14 @@ from rich.logging import RichHandler
 # ── Ensure project root is on sys.path ──────────────────────────
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config.settings import OUTPUT_DIR, DRY_RUN_SYMBOLS
+from config.settings import LOGS_DIR, DRY_RUN_SYMBOLS
 from data.universe import load_universe
 from scoring.engine import ScoringEngine
 from output.final_ranker import save_results
 
 # ── Logging setup ─────────────────────────────────────────────
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-_log_file = os.path.join(OUTPUT_DIR, "engine.log")
+os.makedirs(LOGS_DIR, exist_ok=True)
+_log_file = os.path.join(LOGS_DIR, "engine.log")
 logging.basicConfig(
     level=logging.INFO,
     format="%(message)s",
@@ -45,6 +45,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 console = Console()
+
+# Silence yfinance's internal error spam (delisted-symbol warnings etc.).
+# Our own modules log their own warnings at the appropriate level.
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 
 def parse_args():
@@ -139,9 +143,13 @@ def run_pipeline(
 
 if __name__ == "__main__":
     args = parse_args()
-    run_pipeline(
-        dry_run=args.dry_run,
-        force_refresh=args.refresh,
-        limit=args.limit,
-        top_n=args.top_n,
-    )
+    try:
+        run_pipeline(
+            dry_run=args.dry_run,
+            force_refresh=args.refresh,
+            limit=args.limit,
+            top_n=args.top_n,
+        )
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Interrupted - run aborted. No partial results saved.[/]")
+        sys.exit(130)

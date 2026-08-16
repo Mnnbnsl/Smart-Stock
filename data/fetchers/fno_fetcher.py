@@ -9,10 +9,13 @@ import os
 import json
 import logging
 import time
+import threading
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 import pandas as pd
+from rich.progress import track
 
 from config.settings import CACHE_DIR, FNO_CACHE_TTL_HOURS, NSE_HEADERS, NSE_BASE_URL
 
@@ -36,6 +39,18 @@ def _get_nse_session() -> requests.Session:
     except Exception as e:
         logger.warning(f"NSE session setup failed: {e}")
     return session
+
+
+_thread_local = threading.local()
+
+
+def _get_thread_session() -> requests.Session:
+    """Per-thread NSE session (requests.Session is not thread-safe)."""
+    sess = getattr(_thread_local, "session", None)
+    if sess is None:
+        sess = _get_nse_session()
+        _thread_local.session = sess
+    return sess
 
 
 def _cache_path(symbol: str) -> str:
@@ -142,15 +157,31 @@ def fetch_fno_batch(symbols: list[str]) -> pd.DataFrame:
     """
     Fetch F&O data for a list of NSE symbols.
 
-    Returns DataFrame indexed by symbol with fno columns.
+    Runs concurrently with modest worker count (NSE rate-limits aggressive
+    requests). Returns DataFrame indexed by symbol with fno columns.
     """
-    session = _get_nse_session()
-    rows: list[dict] = []
+    max_workers = min(4, len(symbols)) if symbols else 1
 
-    for symbol in symbols:
-        data = fetch_option_chain(symbol, session=session)
-        rows.append(data)
-        time.sleep(0.3)  # polite delay between requests
+    def _fetch(symbol: str) -> dict:
+        return fetch_option_chain(symbol, session=_get_thread_session())
+
+    rows: list[dict] = []
+    executor = ThreadPoolExecutor(max_workers=max_workers)
+    futures = {executor.submit(_fetch, s): s for s in symbols}
+    try:
+        for future in track(
+            as_completed(futures),
+            total=len(futures),
+            description="F&O sentiment",
+        ):
+            symbol = futures[future]
+            try:
+                rows.append(future.result())
+            except Exception as e:
+                logger.warning(f"F&O fetch failed for {symbol}: {e}")
+                rows.append({"symbol": symbol})
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
     df = pd.DataFrame(rows)
     if "symbol" in df.columns:

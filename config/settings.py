@@ -14,7 +14,8 @@ load_dotenv()
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE_DIR = os.path.join(BASE_DIR, "data", "cache")
 OUTPUT_DIR = os.path.join(BASE_DIR, "output", "reports")
-TEMPLATE_DIR = os.path.join(BASE_DIR, "output", "templates")
+RUNS_DIR = os.path.join(OUTPUT_DIR, "runs")
+LOGS_DIR = os.path.join(BASE_DIR, "output", "logs")
 UNIVERSE_CSV = os.path.join(BASE_DIR, "data", "nse_universe.csv")
 
 # ─────────────────────────────────────────────
@@ -86,6 +87,12 @@ DRY_RUN_SYMBOLS = [
 PRICE_CACHE_TTL_HOURS = 6
 FUNDAMENTAL_CACHE_TTL_HOURS = 24
 FNO_CACHE_TTL_HOURS = 2
+
+# ─────────────────────────────────────────────
+# THROUGHPUT (large-universe runs)
+# ─────────────────────────────────────────────
+FUNDAMENTAL_WORKERS = 4       # parallel threads for Yahoo .info fetches
+PRICE_BATCH_CHUNK = 100       # tickers per yf.download call
 
 # ─────────────────────────────────────────────
 # SCHEDULER
