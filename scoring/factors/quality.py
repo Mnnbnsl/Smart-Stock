@@ -64,12 +64,27 @@ def compute_quality_scores(fundamentals: pd.DataFrame) -> pd.DataFrame:
     margin_raw = pd.to_numeric(df.get("operatingMargins"), errors="coerce") * 100
     margin_score = safe_score(margin_raw, ascending=True)
 
-    composite = (
-        QUALITY_SUB_WEIGHTS["roe"]    * roe_score
-        + QUALITY_SUB_WEIGHTS["roa"]    * roa_score
-        + QUALITY_SUB_WEIGHTS["debt"]   * debt_score
-        + QUALITY_SUB_WEIGHTS["margin"] * margin_score
-    )
+    # Composite: weighted average of sub-scores, skipping NaN components
+    composite = pd.Series(0.0, index=fundamentals.index)
+    weight_sum = pd.Series(0.0, index=fundamentals.index)
+
+    for component, weight in QUALITY_SUB_WEIGHTS.items():
+        if component == "roe":
+            scores = roe_score
+        elif component == "roa":
+            scores = roa_score
+        elif component == "debt":
+            scores = debt_score
+        elif component == "margin":
+            scores = margin_score
+        else:
+            continue
+        valid = scores.notna()
+        composite[valid] += weight * scores[valid]
+        weight_sum[valid] += weight
+
+    mask = weight_sum > 0
+    composite[mask] = composite[mask] / weight_sum[mask]
 
     out = pd.DataFrame({
         "roe_score":     roe_score,

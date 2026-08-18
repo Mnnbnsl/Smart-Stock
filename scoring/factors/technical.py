@@ -126,12 +126,29 @@ def compute_technical_scores(
     macd_score   = safe_score(df_out["macd_diff"],  ascending=True)
     week52_score = safe_score(df_out["week52_pct"], ascending=True)
 
-    composite = (
-        TECHNICAL_SUB_WEIGHTS["rsi"]       * rsi_score
-        + TECHNICAL_SUB_WEIGHTS["sma_trend"] * sma_score
-        + TECHNICAL_SUB_WEIGHTS["macd"]      * macd_score
-        + TECHNICAL_SUB_WEIGHTS["week52"]    * week52_score
-    )
+    # Composite: weighted average of sub-scores, skipping NaN components
+    # so that missing data (e.g. no ta library for MACD) does not poison
+    # the entire score.
+    composite = pd.Series(0.0, index=df_out.index)
+    weight_sum = pd.Series(0.0, index=df_out.index)
+
+    for component, weight in TECHNICAL_SUB_WEIGHTS.items():
+        if component == "rsi":
+            scores = rsi_score
+        elif component == "sma_trend":
+            scores = sma_score
+        elif component == "macd":
+            scores = macd_score
+        elif component == "week52":
+            scores = week52_score
+        else:
+            continue
+        valid = scores.notna()
+        composite[valid] += weight * scores[valid]
+        weight_sum[valid] += weight
+
+    mask = weight_sum > 0
+    composite[mask] = composite[mask] / weight_sum[mask]
 
     df_out["technical_score"] = composite.clip(0, 100)
     logger.info(f"Technical: scored {len(df_out)} tickers")

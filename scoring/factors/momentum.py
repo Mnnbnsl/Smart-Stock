@@ -84,12 +84,21 @@ def compute_momentum_scores(
     df_out = pd.DataFrame(rows).set_index("ticker")
 
     # Composite momentum score: weighted sum of period percentile scores
+    # NaN periods are skipped and weights renormalized per-stock so that
+    # missing data (e.g.12m with insufficient lookback) does not poison
+    # the entire composite.
     composite = pd.Series(0.0, index=df_out.index)
+    weight_sum = pd.Series(0.0, index=df_out.index)
     for period, weight in MOMENTUM_PERIOD_WEIGHTS.items():
         col = f"rel_{period}"
         if col in df_out.columns:
             period_score = safe_score(df_out[col], ascending=True)
-            composite += weight * period_score
+            valid = period_score.notna()
+            composite[valid] += weight * period_score[valid]
+            weight_sum[valid] += weight
+
+    mask = weight_sum > 0
+    composite[mask] = composite[mask] / weight_sum[mask]
 
     df_out["momentum_score"] = composite.clip(0, 100)
     logger.info(f"Momentum: scored {len(df_out)} tickers")
