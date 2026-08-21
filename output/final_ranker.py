@@ -3,11 +3,9 @@ Final Ranker.
 
 For Stage 1 (scoring engine only), this module:
   1. Takes the full scored DataFrame from the Scoring Engine
-  2. Saves JSON and CSV reports
-  3. Overwrites latest.json / latest.csv for easy consumption
-
-When the Agent Research Pipeline (Stage 2) is added, this module will
-combine quant_score + agent_score into a final composite ranking.
+  2. Saves JSON and CSV reports (with flags + data_completeness)
+  3. Persists run results to SQLite for queryable history
+  4. Overwrites latest.json / latest.csv for easy consumption
 """
 
 import os
@@ -17,7 +15,8 @@ from datetime import datetime
 
 import pandas as pd
 
-from config.settings import OUTPUT_DIR, RUNS_DIR
+from config.settings import OUTPUT_DIR, RUNS_DIR, FACTOR_WEIGHTS
+from data.db import insert_run
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +26,7 @@ def save_results(
     run_ts: str | None = None,
 ) -> dict[str, str]:
     """
-    Save scored results to JSON and CSV.
+    Save scored results to JSON, CSV, and SQLite.
 
     Timestamped files are archived under runs/<ts>/ while latest.json and
     latest.csv are always overwritten for easy consumption.
@@ -59,22 +58,37 @@ def save_results(
     df.to_csv(latest_csv)
     paths["latest_csv"] = latest_csv
 
+    # ── Persist to SQLite ────────────────────────────────────────────
+    try:
+        insert_run(ts, df, FACTOR_WEIGHTS)
+    except Exception as e:
+        logger.warning(f"Could not persist run to DB: {e}")
+
     logger.info(f"Results saved: {paths}")
     return paths
 
 
 def _save_json(df: pd.DataFrame, path: str, ts: str) -> None:
-    """Save results as structured JSON."""
+    """Save results as structured JSON with flags and data_completeness."""
     shortlisted = df[df.get("shortlisted", pd.Series(False, index=df.index)) == True]
 
     records = []
     for ticker, row in df.iterrows():
+        flags = row.get("flags", [])
+        if isinstance(flags, str):
+            try:
+                flags = json.loads(flags)
+            except (json.JSONDecodeError, TypeError):
+                flags = [flags] if flags else []
+
         records.append({
             "ticker":           ticker,
             "symbol":           row.get("symbol", ticker),
             "rank":             int(row.get("rank", 999)),
             "quant_score":      round(float(row.get("quant_score", 0)), 2),
             "shortlisted":      bool(row.get("shortlisted", False)),
+            "data_completeness": round(float(row.get("data_completeness", 1.0)), 2),
+            "flags":            flags,
             "factor_scores": {
                 "momentum":   round(float(row.get("momentum_score", 50)), 2),
                 "liquidity":  round(float(row.get("liquidity_score", 50)), 2),

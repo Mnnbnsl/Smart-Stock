@@ -2,7 +2,8 @@
 Fundamental Data Fetcher.
 
 Retrieves key fundamental metrics from Yahoo Finance's .info dict.
-Cached to Parquet (24-hour TTL since fundamentals change slowly).
+Uses SQLite for storage: one row per fetch per ticker (history-preserving).
+TTL-gated: only fetches if the latest DB row is older than 24h.
 """
 
 import os
@@ -15,15 +16,17 @@ import pandas as pd
 import yfinance as yf
 from rich.progress import track
 
-from config.settings import (
-    CACHE_DIR,
-    FUNDAMENTAL_CACHE_TTL_HOURS,
-    FUNDAMENTAL_WORKERS,
+from config.settings import FUNDAMENTAL_WORKERS
+from data.db import (
+    get_latest_fundamentals,
+    insert_fundamentals,
+    fundamentals_to_dataframe,
 )
 
 logger = logging.getLogger(__name__)
 
-FUND_CACHE_DIR = os.path.join(CACHE_DIR, "fundamentals")
+# TTL for freshness check (hours)
+FUNDAMENTAL_TTL_HOURS = 24
 
 # Fields we care about from yfinance .info
 WANTED_FIELDS = [
@@ -69,16 +72,19 @@ WANTED_FIELDS = [
 ]
 
 
-def _cache_path(ticker: str) -> str:
-    safe = ticker.replace(".", "_").replace("/", "_")
-    return os.path.join(FUND_CACHE_DIR, f"{safe}.json")
-
-
-def _is_cache_valid(path: str) -> bool:
-    if not os.path.exists(path):
+def _is_fresh(symbol: str) -> bool:
+    """Check if the latest fundamentals row for a symbol is within TTL."""
+    row = get_latest_fundamentals(symbol)
+    if row is None:
         return False
-    mtime = datetime.fromtimestamp(os.path.getmtime(path))
-    return datetime.now() - mtime < timedelta(hours=FUNDAMENTAL_CACHE_TTL_HOURS)
+    fetch_date_str = row.get("fetch_date", "")
+    if not fetch_date_str:
+        return False
+    try:
+        fetch_date = datetime.fromisoformat(fetch_date_str)
+        return datetime.now() - fetch_date < timedelta(hours=FUNDAMENTAL_TTL_HOURS)
+    except (ValueError, TypeError):
+        return False
 
 
 def fetch_fundamentals(ticker: str, force_refresh: bool = False) -> dict:
@@ -86,18 +92,13 @@ def fetch_fundamentals(ticker: str, force_refresh: bool = False) -> dict:
     Fetch fundamental data for a single ticker.
 
     Returns a dict of fundamental metrics. Missing fields default to None.
+    Checks DB freshness first; only hits yfinance if data is stale.
     """
-    os.makedirs(FUND_CACHE_DIR, exist_ok=True)
-    cache = _cache_path(ticker)
-
-    if not force_refresh and _is_cache_valid(cache):
-        try:
-            with open(cache, "r") as f:
-                data = json.load(f)
-            logger.debug(f"[cache] fundamentals {ticker}")
-            return data
-        except Exception as e:
-            logger.warning(f"Fundamental cache read failed for {ticker}: {e}")
+    if not force_refresh and _is_fresh(ticker):
+        row = get_latest_fundamentals(ticker)
+        if row:
+            logger.debug(f"[db] fundamentals {ticker}")
+            return dict(row)
 
     try:
         info = yf.Ticker(ticker).info
@@ -105,8 +106,7 @@ def fetch_fundamentals(ticker: str, force_refresh: bool = False) -> dict:
         data["ticker"] = ticker
         data["fetched_at"] = datetime.now().isoformat()
 
-        with open(cache, "w") as f:
-            json.dump(data, f, indent=2, default=str)
+        insert_fundamentals(ticker, data)
         logger.debug(f"[fetched] fundamentals {ticker}")
         return data
 
@@ -123,26 +123,40 @@ def fetch_fundamentals_batch(
     Fetch fundamentals for all tickers.
 
     Returns a DataFrame indexed by ticker with all fundamental columns.
+    Only fetches tickers whose DB data is stale (>24h old or missing).
     """
-    rows: list[dict] = []
-    max_workers = min(FUNDAMENTAL_WORKERS, len(tickers)) if tickers else 1
+    # Determine which tickers need fetching
+    to_fetch: list[str] = []
+    cached_count = 0
+    for ticker in tickers:
+        if not force_refresh and _is_fresh(ticker):
+            cached_count += 1
+        else:
+            to_fetch.append(ticker)
 
-    def _fetch(ticker: str) -> dict:
-        return fetch_fundamentals(ticker, force_refresh=force_refresh)
+    if cached_count:
+        logger.info(f"Fundamentals: {cached_count} tickers from DB cache, {len(to_fetch)} to fetch.")
 
-    executor = ThreadPoolExecutor(max_workers=max_workers)
-    futures = {executor.submit(_fetch, t): t for t in tickers}
-    try:
-        for future in track(
-            as_completed(futures),
-            total=len(futures),
-            description="Fundamentals",
-        ):
-            rows.append(future.result())
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+    # Fetch stale tickers from yfinance
+    fetched_rows: list[dict] = []
+    if to_fetch:
+        max_workers = min(FUNDAMENTAL_WORKERS, len(to_fetch))
+        executor = ThreadPoolExecutor(max_workers=max_workers)
+        futures = {executor.submit(fetch_fundamentals, t, force_refresh): t for t in to_fetch}
+        try:
+            for future in track(
+                as_completed(futures),
+                total=len(futures),
+                description="Fundamentals",
+            ):
+                fetched_rows.append(future.result())
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
-    df = pd.DataFrame(rows)
-    if "ticker" in df.columns:
-        df = df.set_index("ticker")
+    # Load all tickers from DB (includes both cached and just-fetched)
+    df = fundamentals_to_dataframe(tickers)
+    if df.empty:
+        logger.warning("No fundamental data available for any ticker.")
+    else:
+        logger.info(f"Fundamentals loaded: {len(df)} tickers.")
     return df

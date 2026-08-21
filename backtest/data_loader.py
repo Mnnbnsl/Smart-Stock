@@ -2,12 +2,8 @@
 Backtest Data Loader.
 
 Fetches and caches multi-year OHLCV price history for the backtest universe
-plus the Nifty 50 benchmark. Reuses the existing per-ticker Parquet cache so
-repeat backtests (and the live engine) don't re-download data.
-
-Historical price data is immutable once downloaded, so the backtest requests an
-extended cache TTL (BACKTEST_PRICE_CACHE_TTL_HOURS) to avoid re-fetching on
-every run.
+plus the Nifty 50 benchmark. Uses SQLite for storage — same incremental
+approach as the live engine's price_fetcher.
 """
 
 import logging
@@ -15,10 +11,7 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 
-from config.settings import (
-    BACKTEST_LOOKBACK_DAYS,
-    BACKTEST_PRICE_CACHE_TTL_HOURS,
-)
+from config.settings import BACKTEST_LOOKBACK_DAYS
 from data.fetchers.price_fetcher import fetch_price_batch, fetch_price_data, get_benchmark_data
 
 logger = logging.getLogger(__name__)
@@ -39,28 +32,18 @@ def load_backtest_price_data(
     """
     Load multi-year OHLCV history for all backtest tickers.
 
-    Parameters
-    ----------
-    tickers : list[str]
-        Yahoo Finance tickers (e.g. ['TCS.NS', 'INFY.NS']).
-    force_refresh : bool
-        Bypass all caches if True.
+    Uses the same SQLite-backed incremental fetcher as the live engine.
+    Tickes with insufficient history are re-fetched; thin tickers are dropped.
 
-    Returns
-    -------
-    dict[str, pd.DataFrame]
-        { ticker -> OHLCV DataFrame } with at least MIN_TRADING_DAYS of history.
-        Thin/failed tickers are omitted.
+    Returns dict: { ticker -> OHLCV DataFrame } with at least MIN_TRADING_DAYS.
     """
     price_data = fetch_price_batch(
         tickers,
         force_refresh=force_refresh,
         period_days=BACKTEST_LOOKBACK_DAYS,
-        ttl_hours=BACKTEST_PRICE_CACHE_TTL_HOURS,
     )
 
-    # Fresh cache files may still be too SHORT (e.g. downloaded before the
-    # backtest lookback was configured). Verify actual coverage and re-download.
+    # Verify actual coverage and re-fetch if needed
     required_start = _required_start()
     insufficient = [
         t for t, df in price_data.items()
@@ -101,14 +84,12 @@ def load_backtest_benchmark(
     """Load Nifty 50 (^NSEI) OHLCV history as the backtest benchmark."""
     df = get_benchmark_data(
         force_refresh=force_refresh,
-        ttl_hours=BACKTEST_PRICE_CACHE_TTL_HOURS,
         period_days=BACKTEST_LOOKBACK_DAYS,
     )
     if df is not None and not df.empty and df.index.min() > _required_start():
         logger.info("Benchmark cache too short - re-fetching full history...")
         df = get_benchmark_data(
             force_refresh=True,
-            ttl_hours=BACKTEST_PRICE_CACHE_TTL_HOURS,
             period_days=BACKTEST_LOOKBACK_DAYS,
         )
     return df

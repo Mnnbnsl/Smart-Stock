@@ -25,6 +25,7 @@ from rich.table import Table
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config.settings import LOGS_DIR, DRY_RUN_SYMBOLS, TOP_N_SHORTLIST
+from data.db import init_schema
 from data.fetchers.price_fetcher import fetch_price_batch, get_benchmark_data
 from backtest.pit_engine import score_point_in_time
 
@@ -62,6 +63,7 @@ def parse_args():
 
 
 def run_validate(args):
+    init_schema()
     console.rule("[bold cyan]ONE-DAY VALIDATION")
 
     # ── Load universe ────────────────────────────────────────────
@@ -113,7 +115,6 @@ def run_validate(args):
             console.print(f"Available: {[d.strftime('%Y-%m-%d') for d in trading_days[-10:]]}")
             return
     else:
-        # Next trading day after scoring_date
         after = [d for d in trading_days if d > scoring_date]
         if not after:
             console.print("[bold red]No trading day found after scoring date.[/]")

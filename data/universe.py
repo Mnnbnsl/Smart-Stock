@@ -4,6 +4,7 @@ NSE Stock Universe Loader.
 Downloads the Nifty 500 constituent list from NSE website.
 Falls back to a bundled CSV if the download fails.
 Applies basic liquidity and price filters.
+Tracks delisted symbols via SQLite (with JSON migration fallback).
 """
 
 import os
@@ -67,37 +68,56 @@ FALLBACK_SYMBOLS = [
     "TATACHEM", "GHCL", "GNFC", "GSFC",
 ]
 
-# Symbols that no longer resolve on Yahoo (delisted / renamed) — persisted so
-# later runs skip them at load instead of wasting time on throttled retries.
-DELISTED_CACHE = os.path.join(CACHE_DIR, "delisted.json")
+# Legacy JSON path (used for one-time migration)
+DELISTED_JSON_CACHE = os.path.join(CACHE_DIR, "delisted.json")
 
 
-def _load_delisted() -> set[str]:
-    """Load the set of NSE symbols previously found to have no price data."""
+# ─────────────────────────────────────────────────────────────────────
+# Delisted handling (DB-backed, with JSON migration)
+# ─────────────────────────────────────────────────────────────────────
+
+def _migrate_delisted_json_to_db() -> None:
+    """One-time migration: read delisted.json into SQLite if it exists."""
+    if not os.path.exists(DELISTED_JSON_CACHE):
+        return
     try:
-        with open(DELISTED_CACHE, "r") as f:
-            return set(json.load(f))
-    except Exception:
-        return set()
-
-
-def _save_delisted(symbols: set[str]) -> None:
-    """Persist the delisted-symbol set to cache."""
-    os.makedirs(os.path.dirname(DELISTED_CACHE), exist_ok=True)
-    with open(DELISTED_CACHE, "w") as f:
-        json.dump(sorted(symbols), f, indent=2)
+        from data.db import mark_delisted_db, get_delisted_symbols
+        with open(DELISTED_JSON_CACHE, "r") as f:
+            symbols = json.load(f)
+        existing = get_delisted_symbols()
+        migrated = 0
+        for s in symbols:
+            if s not in existing:
+                mark_delisted_db(s, reason="migrated_from_json")
+                migrated += 1
+        if migrated:
+            logger.info(f"Migrated {migrated} delisted symbols from JSON to DB.")
+        # Rename old file so migration only runs once
+        os.rename(DELISTED_JSON_CACHE, DELISTED_JSON_CACHE + ".migrated")
+    except Exception as e:
+        logger.debug(f"Delisted JSON migration skipped: {e}")
 
 
 def mark_delisted(symbols: list[str]) -> None:
     """Record symbols with no price data so future runs skip them."""
-    delisted = _load_delisted()
-    delisted.update(symbols)
-    _save_delisted(delisted)
+    try:
+        from data.db import mark_delisted_db
+        for s in symbols:
+            mark_delisted_db(s, reason="no_price_data")
+    except Exception:
+        # Fallback to JSON if DB not initialized yet
+        _mark_delisted_json(symbols)
 
 
 def _drop_delisted(df: pd.DataFrame) -> pd.DataFrame:
     """Filter a universe DataFrame (symbol column) to drop known-dead symbols."""
-    delisted = _load_delisted()
+    delisted = set()
+    try:
+        from data.db import get_delisted_symbols
+        delisted = get_delisted_symbols()
+    except Exception:
+        delisted = _load_delisted_json()
+
     if not delisted:
         return df
     dropped = [s for s in df["symbol"] if s in delisted]
@@ -106,12 +126,35 @@ def _drop_delisted(df: pd.DataFrame) -> pd.DataFrame:
     return df[~df["symbol"].isin(delisted)].reset_index(drop=True)
 
 
+# Legacy JSON helpers (kept for fallback)
+DELISTED_CACHE = DELISTED_JSON_CACHE
+
+
+def _load_delisted_json() -> set[str]:
+    try:
+        with open(DELISTED_CACHE, "r") as f:
+            return set(json.load(f))
+    except Exception:
+        return set()
+
+
+def _mark_delisted_json(symbols: list[str]) -> None:
+    delisted = _load_delisted_json()
+    delisted.update(symbols)
+    os.makedirs(os.path.dirname(DELISTED_CACHE), exist_ok=True)
+    with open(DELISTED_CACHE, "w") as f:
+        json.dump(sorted(delisted), f, indent=2)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# NSE data fetching
+# ─────────────────────────────────────────────────────────────────────
+
 def _get_nse_session() -> requests.Session:
     """Create a requests session with NSE cookies."""
     session = requests.Session()
     session.headers.update(NSE_HEADERS)
     try:
-        # Visit homepage first to get cookies
         session.get(NSE_BASE_URL, timeout=10)
     except Exception as e:
         logger.warning(f"Could not establish NSE session: {e}")
@@ -176,9 +219,12 @@ def _fetch_nse_index_symbols(index_key: str = "nifty500") -> list[str]:
     return _fetch_nse_index_api(index_key)
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Universe cache (CSV-based, kept for backward compatibility)
+# ─────────────────────────────────────────────────────────────────────
+
 def _load_cached_universe() -> pd.DataFrame | None:
-    """Load universe from local CSV cache if it exists, is fresh (< 7 days),
-    and matches the current cache format version."""
+    """Load universe from local CSV cache if fresh and current version."""
     if not os.path.exists(UNIVERSE_CSV):
         return None
     mtime = datetime.fromtimestamp(os.path.getmtime(UNIVERSE_CSV))
@@ -215,9 +261,13 @@ def load_universe(force_refresh: bool = False) -> pd.DataFrame:
     Load the NSE stock universe.
 
     Returns a DataFrame with columns: [symbol, yf_ticker]
-    - symbol: NSE symbol (e.g. 'TCS')
-    - yf_ticker: Yahoo Finance ticker (e.g. 'TCS.NS')
     """
+    # Attempt one-time migration of delisted.json → DB
+    try:
+        _migrate_delisted_json_to_db()
+    except Exception:
+        pass
+
     if not force_refresh:
         cached = _load_cached_universe()
         if cached is not None:
@@ -242,6 +292,16 @@ def load_universe(force_refresh: bool = False) -> pd.DataFrame:
     })
 
     _save_universe(df, source=source)
+
+    # Persist universe membership to DB
+    try:
+        from data.db import upsert_universe
+        today = datetime.now().strftime("%Y-%m-%d")
+        for sym in symbols:
+            upsert_universe(sym, today, source)
+    except Exception as e:
+        logger.debug(f"Could not persist universe to DB: {e}")
+
     return _drop_delisted(df)
 
 

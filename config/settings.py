@@ -17,6 +17,7 @@ OUTPUT_DIR = os.path.join(BASE_DIR, "output", "reports")
 RUNS_DIR = os.path.join(OUTPUT_DIR, "runs")
 LOGS_DIR = os.path.join(BASE_DIR, "output", "logs")
 UNIVERSE_CSV = os.path.join(BASE_DIR, "data", "nse_universe.csv")
+DB_PATH = os.path.join(BASE_DIR, "data", "stock_scores.db")
 
 # ─────────────────────────────────────────────
 # UNIVERSE FILTERS
@@ -65,10 +66,14 @@ EARNINGS_PENALTY_DAYS = 3    # Penalize if earnings within N days
 TOP_N_SHORTLIST = 25         # How many stocks pass to Stage 2 (agent)
 
 # ─────────────────────────────────────────────
+# DATA COMPLETENESS
+# ─────────────────────────────────────────────
+MIN_DATA_COMPLETENITY = 0.5  # Below this, flag as low_confidence
+
+# ─────────────────────────────────────────────
 # BACKTEST
 # ─────────────────────────────────────────────
 BACKTEST_LOOKBACK_DAYS = 1650           # ~4.5 years buffer (covers 12m momentum at start date)
-BACKTEST_PRICE_CACHE_TTL_HOURS = 168    # 1 week — historical price data is immutable
 
 # ─────────────────────────────────────────────
 # DRY RUN SYMBOLS (quick test universe)
@@ -79,12 +84,6 @@ DRY_RUN_SYMBOLS = [
     "SUNPHARMA", "ADANIENT", "LT", "NTPC", "SBIN",
     "HCLTECH", "KOTAKBANK", "ASIANPAINT", "NESTLEIND", "DRREDDY",
 ]
-
-# ─────────────────────────────────────────────
-# CACHE TTL (hours)
-# ─────────────────────────────────────────────
-PRICE_CACHE_TTL_HOURS = 6
-FUNDAMENTAL_CACHE_TTL_HOURS = 24
 
 # ─────────────────────────────────────────────
 # THROUGHPUT (large-universe runs)

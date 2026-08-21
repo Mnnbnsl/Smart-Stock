@@ -11,6 +11,9 @@ venv/
 
 # Downloaded/cached market data (regenerated on demand)
 data/cache/
+data/stock_scores.db
+data/stock_scores.db-shm
+data/stock_scores.db-wal
 
 # Generated results & logs (recreated each run)
 output/logs/

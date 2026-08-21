@@ -2,7 +2,8 @@
 Price Data Fetcher.
 
 Downloads OHLCV data from Yahoo Finance for all NSE symbols.
-Caches to Parquet files to avoid redundant API calls.
+Uses SQLite for incremental storage — only fetches the delta since the
+last stored date per symbol.
 """
 
 import os
@@ -12,63 +13,76 @@ from datetime import datetime, timedelta
 import pandas as pd
 import yfinance as yf
 
-from config.settings import CACHE_DIR, LOOKBACK_DAYS, PRICE_CACHE_TTL_HOURS, PRICE_BATCH_CHUNK
+from config.settings import LOOKBACK_DAYS, PRICE_BATCH_CHUNK
+from data.db import get_max_price_date, insert_prices, get_prices
 
 logger = logging.getLogger(__name__)
-
-PRICE_CACHE_DIR = os.path.join(CACHE_DIR, "price")
-
-
-def _cache_path(ticker: str) -> str:
-    safe = ticker.replace(".", "_").replace("/", "_")
-    return os.path.join(PRICE_CACHE_DIR, f"{safe}.parquet")
-
-
-def _is_cache_valid(path: str, ttl_hours: int) -> bool:
-    if not os.path.exists(path):
-        return False
-    mtime = datetime.fromtimestamp(os.path.getmtime(path))
-    return datetime.now() - mtime < timedelta(hours=ttl_hours)
 
 
 def fetch_price_data(
     ticker: str,
     force_refresh: bool = False,
     period_days: int = LOOKBACK_DAYS,
-    ttl_hours: int | None = None,
 ) -> pd.DataFrame | None:
     """
     Fetch OHLCV for a single ticker.
 
+    Checks the DB for the latest stored date and only fetches the delta.
     Returns DataFrame with columns: [Open, High, Low, Close, Volume]
     indexed by Date. Returns None on failure.
     """
-    os.makedirs(PRICE_CACHE_DIR, exist_ok=True)
-    cache = _cache_path(ticker)
-    cache_ttl = ttl_hours or PRICE_CACHE_TTL_HOURS
+    max_stored = get_max_price_date(ticker) if not force_refresh else None
 
-    if not force_refresh and _is_cache_valid(cache, cache_ttl):
+    if max_stored and not force_refresh:
+        # Data exists — fetch only the gap
+        start_date = (
+            datetime.strptime(max_stored, "%Y-%m-%d") + timedelta(days=1)
+        ).strftime("%Y-%m-%d")
+        end_date = datetime.today().strftime("%Y-%m-%d")
+
+        if start_date > end_date:
+            # Already up to date
+            df = get_prices(ticker)
+            logger.debug(f"[db] {ticker}: {len(df)} rows (up to date)")
+            return df if not df.empty else None
+
         try:
-            df = pd.read_parquet(cache)
-            logger.debug(f"[cache] {ticker}: {len(df)} rows")
-            return df
+            ticker_obj = yf.Ticker(ticker)
+            df = ticker_obj.history(start=start_date, end=end_date, auto_adjust=True)
+            if not df.empty:
+                df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
+                df.index = pd.to_datetime(df.index).tz_localize(None)
+                insert_prices(ticker, df)
+                # Return full history from DB
+                full = get_prices(ticker)
+                logger.debug(f"[incremental] {ticker}: +{len(df)} rows, total {len(full)}")
+                return full if not full.empty else None
+            else:
+                # No new data but existing data is fine
+                full = get_prices(ticker)
+                logger.debug(f"[db] {ticker}: {len(full)} rows (no new data)")
+                return full if not full.empty else None
         except Exception as e:
-            logger.warning(f"Cache read failed for {ticker}: {e}")
+            logger.warning(f"Incremental price fetch failed for {ticker}: {e}")
+            # Fall through to full fetch
 
+    # Full fetch (first time or force_refresh)
     try:
         end = datetime.today()
         start = end - timedelta(days=period_days)
         ticker_obj = yf.Ticker(ticker)
-        df = ticker_obj.history(start=start.strftime("%Y-%m-%d"),
-                                end=end.strftime("%Y-%m-%d"),
-                                auto_adjust=True)
+        df = ticker_obj.history(
+            start=start.strftime("%Y-%m-%d"),
+            end=end.strftime("%Y-%m-%d"),
+            auto_adjust=True,
+        )
         if df.empty:
             logger.warning(f"No price data returned for {ticker}")
             return None
 
         df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
         df.index = pd.to_datetime(df.index).tz_localize(None)
-        df.to_parquet(cache)
+        insert_prices(ticker, df)
         logger.debug(f"[fetched] {ticker}: {len(df)} rows")
         return df
 
@@ -86,7 +100,6 @@ def _download_and_extract(
     """Download one chunk of tickers via yfinance and extract per-ticker frames."""
     if not batch:
         return
-    # yfinance batch download (much faster than individual calls)
     try:
         raw = yf.download(
             tickers=" ".join(batch),
@@ -103,7 +116,6 @@ def _download_and_extract(
     if raw.empty:
         return
 
-    # yfinance batch returns MultiIndex columns: (field, ticker)
     if isinstance(raw.columns, pd.MultiIndex):
         for ticker in batch:
             try:
@@ -113,19 +125,17 @@ def _download_and_extract(
                 if df.empty:
                     continue
                 df.index = pd.to_datetime(df.index).tz_localize(None)
-                os.makedirs(PRICE_CACHE_DIR, exist_ok=True)
-                df.to_parquet(_cache_path(ticker))
+                insert_prices(ticker, df)
                 results[ticker] = df
             except Exception as e:
                 logger.warning(f"Could not extract {ticker}: {e}")
     else:
-        # Single ticker batch
         if len(batch) == 1:
             ticker = batch[0]
             df = raw[["Open", "High", "Low", "Close", "Volume"]].dropna(how="all")
             if not df.empty:
                 df.index = pd.to_datetime(df.index).tz_localize(None)
-                df.to_parquet(_cache_path(ticker))
+                insert_prices(ticker, df)
                 results[ticker] = df
 
 
@@ -138,26 +148,40 @@ def fetch_price_batch(
     """
     Fetch OHLCV for a batch of tickers.
 
-    Downloads are chunked (PRICE_BATCH_CHUNK per call) so large universes
-    (e.g. Nifty 500) don't hit a single oversized request.
+    Uses incremental DB-backed storage:
+      - Symbols with fresh data in DB are loaded from DB (no network call).
+      - Symbols with stale/missing data are downloaded and stored.
+      - Batch downloads are chunked (PRICE_BATCH_CHUNK per call).
 
-    Returns dict: { ticker -> DataFrame }
-    Failed tickers are omitted.
+    Parameters
+    ----------
+    ttl_hours : int | None
+        Kept for API compatibility but no longer used (DB freshness is
+        determined by max stored date vs today).
+
+    Returns
+    -------
+    dict[str, pd.DataFrame]
+        { ticker -> OHLCV DataFrame }. Failed tickers are omitted.
     """
     results: dict[str, pd.DataFrame] = {}
-    cache_ttl = ttl_hours or PRICE_CACHE_TTL_HOURS
 
-    # Separate cache hits from misses
+    # Separate: DB already has data vs needs download
     to_download: list[str] = []
     for ticker in tickers:
-        cache = _cache_path(ticker)
-        if not force_refresh and _is_cache_valid(cache, cache_ttl):
-            try:
-                results[ticker] = pd.read_parquet(cache)
-            except Exception:
-                to_download.append(ticker)
-        else:
-            to_download.append(ticker)
+        if not force_refresh:
+            max_date = get_max_price_date(ticker)
+            if max_date:
+                # Check if it covers up to today (or yesterday for weekends)
+                stored = datetime.strptime(max_date, "%Y-%m-%d")
+                today = datetime.today()
+                # Allow 3-day slack for weekends/holidays
+                if (today - stored).days <= 3:
+                    df = get_prices(ticker)
+                    if not df.empty:
+                        results[ticker] = df
+                        continue
+        to_download.append(ticker)
 
     if to_download:
         logger.info(f"Downloading price data for {len(to_download)} tickers...")
@@ -167,7 +191,7 @@ def fetch_price_batch(
         chunk_size = PRICE_BATCH_CHUNK
         total_chunks = (len(to_download) + chunk_size - 1) // chunk_size
         for i in range(0, len(to_download), chunk_size):
-            chunk = to_download[i:i + chunk_size]
+            chunk = to_download[i : i + chunk_size]
             if total_chunks > 1:
                 logger.info(
                     f"  price chunk {i // chunk_size + 1}/{total_chunks}: "
@@ -175,19 +199,12 @@ def fetch_price_batch(
                 )
             _download_and_extract(chunk, start, end, results)
 
-        # Batch downloads are flaky under Yahoo throttling — retry the
-        # leftovers individually so transient failures are not mistaken
-        # for delisted symbols.
+        # Retry leftovers individually
         missing = [t for t in to_download if t not in results]
         if missing:
             logger.info(f"Retrying {len(missing)} symbols individually...")
             for t in missing:
-                df = fetch_price_data(
-                    t,
-                    force_refresh=True,
-                    period_days=period_days,
-                    ttl_hours=cache_ttl,
-                )
+                df = fetch_price_data(t, force_refresh=True, period_days=period_days)
                 if df is not None and not df.empty:
                     results[t] = df
 
@@ -195,11 +212,14 @@ def fetch_price_batch(
     return results
 
 
-def get_benchmark_data(force_refresh: bool = False, ttl_hours: int | None = None, period_days: int | None = None) -> pd.DataFrame | None:
+def get_benchmark_data(
+    force_refresh: bool = False,
+    ttl_hours: int | None = None,
+    period_days: int | None = None,
+) -> pd.DataFrame | None:
     """Fetch Nifty 50 index as benchmark (^NSEI)."""
     return fetch_price_data(
         "^NSEI",
         force_refresh=force_refresh,
         period_days=period_days or LOOKBACK_DAYS,
-        ttl_hours=ttl_hours,
     )

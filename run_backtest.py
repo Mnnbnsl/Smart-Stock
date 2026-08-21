@@ -28,6 +28,7 @@ from rich.logging import RichHandler
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config.settings import LOGS_DIR, DRY_RUN_SYMBOLS
+from data.db import init_schema
 from backtest.runner import BacktestRunner
 
 # ── Logging setup ─────────────────────────────────────────────
@@ -106,6 +107,7 @@ def parse_args():
 
 
 def run_backtest(args) -> dict:
+    init_schema()
     console.rule(f"[bold cyan]BACKTEST RUN -- {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     symbols = None

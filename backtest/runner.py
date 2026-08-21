@@ -20,6 +20,7 @@ from rich.console import Console
 from rich.table import Table
 
 from config.settings import OUTPUT_DIR, RUNS_DIR
+from data.db import init_schema, insert_backtest
 from data.universe import load_universe
 from backtest.data_loader import load_backtest_benchmark, load_backtest_price_data
 from backtest.pit_engine import score_point_in_time
@@ -80,6 +81,7 @@ class BacktestRunner:
         force_refresh: bool = False,
     ) -> dict:
         """Execute backtest simulation."""
+        init_schema()
         console.rule("[bold cyan]BACKTEST SIMULATION")
         console.print(f"Period: [yellow]{self.start_date.strftime('%Y-%m-%d')}[/] to [yellow]{self.end_date.strftime('%Y-%m-%d')}[/]")
         console.print(f"Frequency: [cyan]{self.freq}[/] | Portfolio Size: [cyan]Top {self.top_n}[/] | Fee: [cyan]{self.fee_pct * 100:.1f}%[/]\n")
@@ -216,6 +218,25 @@ class BacktestRunner:
             benchmark_equity=benchmark_equity,
             rebalance_logs=rebalance_logs,
         )
+
+        # Persist to SQLite
+        try:
+            backtest_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+            params = {
+                "start_date": self.start_date.strftime("%Y-%m-%d"),
+                "end_date": self.end_date.strftime("%Y-%m-%d"),
+                "freq": self.freq,
+                "top_n": self.top_n,
+                "fee_pct": self.fee_pct,
+                "initial_capital": self.initial_capital,
+            }
+            equity_df = pd.DataFrame({
+                "strategy_equity": strategy_equity,
+                "benchmark_equity": benchmark_equity,
+            })
+            insert_backtest(backtest_id, params, metrics, equity_df)
+        except Exception as e:
+            logger.warning(f"Could not persist backtest to DB: {e}")
 
         return {
             "metrics": metrics,

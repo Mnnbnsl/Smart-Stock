@@ -28,6 +28,7 @@ from rich.logging import RichHandler
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config.settings import LOGS_DIR, DRY_RUN_SYMBOLS
+from data.db import init_schema
 from data.universe import load_universe
 from scoring.engine import ScoringEngine
 from output.final_ranker import save_results
@@ -93,6 +94,9 @@ def run_pipeline(
     """
     run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     console.rule(f"[bold cyan]SCORING ENGINE RUN -- {run_ts}")
+
+    # ── Initialize SQLite DB ───────────────────────────────────
+    init_schema()
 
     # ── Load universe ────────────────────────────────────────────
     if dry_run:
